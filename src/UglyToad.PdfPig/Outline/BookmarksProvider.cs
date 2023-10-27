@@ -74,7 +74,8 @@
             // (Required) The text that shall be displayed on the screen for this item.
             if (!nodeDictionary.TryGetOptionalStringDirect(NameToken.Title, pdfScanner, out var title))
             {
-                throw new PdfDocumentFormatException($"Invalid title for outline (bookmark) node: {nodeDictionary}.");
+                // OBDS customization: We can’t enforce such PDF rules to our customers.  As documents can come from anywhere, and can be encrypted, with customer being unable to fix PDF files so it’s compliant to standards.
+                //throw new PdfDocumentFormatException($"Invalid title for outline (bookmark) node: {nodeDictionary}.");
             }
 
             var children = new List<BookmarkNode>();
