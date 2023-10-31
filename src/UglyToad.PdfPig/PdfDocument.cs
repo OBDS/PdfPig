@@ -77,6 +77,8 @@
         /// </summary>
         public bool IsEncrypted => encryptionDictionary != null;
 
+        public Action<BookmarkNode, DictionaryToken> OnGettingBookmarkAction { get; set; }
+
         internal PdfDocument(IInputBytes inputBytes,
             HeaderVersion version,
             CrossReferenceTable crossReferenceTable,
@@ -209,6 +211,8 @@
             {
                 throw new ObjectDisposedException("Cannot access the bookmarks after the document is disposed.");
             }
+
+            bookmarksProvider.OnGettingBookmarkAction = OnGettingBookmarkAction;
 
             bookmarks = bookmarksProvider.GetBookmarks(Structure.Catalog);
             if (bookmarks != null)

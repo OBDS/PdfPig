@@ -10,11 +10,13 @@
     using Tokenization.Scanner;
     using Tokens;
     using Util;
+    using System;
 
     internal class BookmarksProvider
     {
         private readonly ILog log;
         private readonly IPdfTokenScanner pdfScanner;
+        public Action<BookmarkNode, DictionaryToken> OnGettingBookmarkAction { get; set; }
 
         public BookmarksProvider(ILog log, IPdfTokenScanner pdfScanner)
         {
@@ -114,6 +116,8 @@
                 log.Error($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
                 return;
             }
+
+            OnGettingBookmarkAction?.Invoke(bookmark, nodeDictionary);
 
             list.Add(bookmark);
 
