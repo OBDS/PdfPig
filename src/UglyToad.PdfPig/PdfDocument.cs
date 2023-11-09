@@ -77,6 +77,9 @@
         /// </summary>
         public bool IsEncrypted => encryptionDictionary != null;
 
+        /// <summary>
+        /// OnGettingBookmarkAction
+        /// </summary>
         public Action<BookmarkNode, DictionaryToken> OnGettingBookmarkAction { get; set; }
 
         internal PdfDocument(IInputBytes inputBytes,

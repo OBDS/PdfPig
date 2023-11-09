@@ -113,8 +113,9 @@
             }
             else
             {
-                log.Error($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
-                return;
+                // Return boomark with page #0 if no destination or action is found.
+                log.Warn($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
+                bookmark = new DocumentBookmarkNode(title, level, new ExplicitDestination(0, ExplicitDestinationType.XyzCoordinates, new ExplicitDestinationCoordinates(0)), children);
             }
 
             OnGettingBookmarkAction?.Invoke(bookmark, nodeDictionary);
