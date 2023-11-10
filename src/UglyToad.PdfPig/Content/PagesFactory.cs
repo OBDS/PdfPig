@@ -154,28 +154,31 @@
 
                     if (!DirectObjectFinder.TryGet(kidRef, pdfTokenScanner, out DictionaryToken kidDictionaryToken))
                     {
-                        throw new PdfDocumentFormatException($"Could not find dictionary associated with reference in pages kids array: {kidRef}.");
+                        //throw new PdfDocumentFormatException($"Could not find dictionary associated with reference in pages kids array: {kidRef}.");
                     }
 
-                    bool isChildPage = CheckIfIsPage(kidDictionaryToken, current.reference, false, pdfTokenScanner, isLenientParsing);
-
-                    if (isChildPage)
+                    if (kidDictionaryToken != null)
                     {
-                        var kidPageNode =
-                            new PageTreeNode(kidDictionaryToken, kidRef.Data, true, pageNumber.PageCount).WithChildren(EmptyArray<PageTreeNode>.Instance);
-                        current.nodeChildren.Add(kidPageNode);
-                    }
-                    else
-                    {
-                        var kidChildNode = new PageTreeNode(kidDictionaryToken, kidRef.Data, false, null);
-                        var kidChildren = new List<PageTreeNode>();
-                        toProcess.Enqueue(
-                            (thisPage: kidChildNode, reference: kidRef.Data, nodeDictionary: kidDictionaryToken, parentReference: current.reference,
-                                nodeChildren: kidChildren));
+                        bool isChildPage = CheckIfIsPage(kidDictionaryToken, current.reference, false, pdfTokenScanner, isLenientParsing);
 
-                        setChildren.Add(() => kidChildNode.WithChildren(kidChildren));
+                        if (isChildPage)
+                        {
+                            var kidPageNode =
+                                new PageTreeNode(kidDictionaryToken, kidRef.Data, true, pageNumber.PageCount).WithChildren(EmptyArray<PageTreeNode>.Instance);
+                            current.nodeChildren.Add(kidPageNode);
+                        }
+                        else
+                        {
+                            var kidChildNode = new PageTreeNode(kidDictionaryToken, kidRef.Data, false, null);
+                            var kidChildren = new List<PageTreeNode>();
+                            toProcess.Enqueue(
+                                (thisPage: kidChildNode, reference: kidRef.Data, nodeDictionary: kidDictionaryToken, parentReference: current.reference,
+                                    nodeChildren: kidChildren));
 
-                        current.nodeChildren.Add(kidChildNode);
+                            setChildren.Add(() => kidChildNode.WithChildren(kidChildren));
+
+                            current.nodeChildren.Add(kidChildNode);
+                        }
                     }
                 }
             } while (toProcess.Count > 0);
