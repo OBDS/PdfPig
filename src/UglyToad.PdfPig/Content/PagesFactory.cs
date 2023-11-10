@@ -25,6 +25,10 @@
         {
             var pageNumber = new PageCounter();
 
+            if (pagesDictionary == null)
+            {
+                return new Pages(pageFactory, scanner, null, new Dictionary<int, PageTreeNode>()); 
+            }
             var pageTree = ProcessPagesNode(pagesReference, pagesDictionary, new IndirectReference(1, 0), true,
                 scanner, isLenientParsing, pageNumber);
 
