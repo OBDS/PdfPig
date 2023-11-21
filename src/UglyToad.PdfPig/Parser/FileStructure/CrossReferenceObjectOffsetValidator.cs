@@ -39,11 +39,11 @@
                         // TODO: more validation of streams.
                         builderOffsets[entry.Key] = entry.Value;
                     }
+                }
 
-                    foreach (var item in bruteForceOffsets)
-                    {
-                        builderOffsets[item.Key] = item.Value;
-                    }
+                foreach (var item in bruteForceOffsets)
+                {
+                    builderOffsets[item.Key] = item.Value;
                 }
 
                 actualOffsets = builderOffsets;
