@@ -32,7 +32,7 @@
                         continue;
                     }
                     
-                    var valueToken = nodeNames[i + 1];
+                    IToken valueToken = nodeNames.Length > i + 1 ? nodeNames[i + 1] : null;
 
                     var value = valuesFactory(valueToken);
 
