@@ -222,6 +222,16 @@
                 // I have no idea if this can ever happen.
                 token = new IndirectReferenceToken(new IndirectReference(objNum.Long, genNum.Int));
             }
+            else if (readStream && readTokens.Count > 0 && readTokens[0] is StreamToken streamToken)
+            {
+                // The stream is the object's value, whatever else was read after it.
+                // An object that is not terminated by 'endobj' lets the loop above run past the
+                // end of the object and collect whatever follows it, and for the last object in a
+                // file that is the trailing "startxref <offset>". Taking the last token then made
+                // the object a number instead of its stream, so a cross reference stream written
+                // that way could not be read and the document failed to open.
+                token = streamToken;
+            }
             else
             {
                 // Just take the last, should only ever be 1

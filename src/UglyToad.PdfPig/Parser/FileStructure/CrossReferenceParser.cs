@@ -160,7 +160,8 @@
                     {
                         if (!TryBruteForceXrefTableLocate(bytes, previousCrossReferenceLocation, out var actualOffset))
                         {
-                            throw new PdfDocumentFormatException();
+                            throw new PdfDocumentFormatException(
+                                $"Could not read the cross reference stream at offset {previousCrossReferenceLocation} and no cross reference table was found anywhere in the document.");
                         }
 
                         previousCrossReferenceLocation = actualOffset;
