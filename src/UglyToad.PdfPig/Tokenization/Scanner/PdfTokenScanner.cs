@@ -807,10 +807,12 @@
 
             for (var i = 0; i < numberOfObjects.Int; i++)
             {
-                scanner.MoveNext();
-                var objectNumber = (NumericToken)scanner.CurrentToken;
-                scanner.MoveNext();
-                var byteOffset = (NumericToken)scanner.CurrentToken;
+                if (!(ReadNextNonCommentToken(scanner) is NumericToken objectNumber)
+                    || !(ReadNextNonCommentToken(scanner) is NumericToken byteOffset))
+                {
+                    throw new PdfDocumentFormatException(
+                        $"Object stream declared {numberOfObjects.Int} objects but the object number/offset pairs ran out after {i}: {stream.StreamDictionary}.");
+                }
 
                 objects.Add(Tuple.Create(objectNumber.Long, byteOffset.Long));
             }
@@ -821,21 +823,56 @@
             {
                 var obj = objects[i];
 
-                scanner.MoveNext();
+                var token = ReadNextNonCommentToken(scanner);
 
-                var token = scanner.CurrentToken;
+                if (token == null)
+                {
+                    // Ran out of data before every declared object was read, keep what we have.
+                    break;
+                }
 
                 if (token.Equals(OperatorToken.EndObject))
                 {
-                    scanner.MoveNext();
+                    token = ReadNextNonCommentToken(scanner);
 
-                    token = scanner.CurrentToken;
+                    if (token == null)
+                    {
+                        break;
+                    }
                 }
 
                 results.Add(new ObjectToken(offset, new IndirectReference(obj.Item1, 0), token));
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Reads the next token, ignoring comments.
+        /// </summary>
+        /// <remarks>
+        /// A comment is equivalent to whitespace and carries no meaning, so it can appear anywhere
+        /// a token can. Some producers annotate the contents of an object stream with them, e.g.
+        /// "% 4 0" before each object and "% endobj" after it. The objects in an object stream are
+        /// read one token at a time, so a comment that was not skipped became the value of an
+        /// object and shifted every object after it onto its neighbour's value. Resolving such an
+        /// object then failed with "Could not find the object number X with type DictionaryToken
+        /// instead, it was found with type CommentToken.".
+        /// The scanner's main loop already skips comments the same way when reading objects that
+        /// are not held in an object stream.
+        /// </remarks>
+        /// <returns>The next token that is not a comment, or null if there are none left.</returns>
+        private static IToken ReadNextNonCommentToken(CoreTokenScanner scanner)
+        {
+            while (scanner.MoveNext())
+            {
+                if (!(scanner.CurrentToken is CommentToken))
+                {
+                    return scanner.CurrentToken;
+                }
+            }
+
+            return null;
         }
 
         public void Dispose()
