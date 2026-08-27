@@ -1,9 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Tests.Integration
 {
-    using System;
     using System.Globalization;
     using Content;
-    using Xunit;
 
     public class AssertablePositionData
     {
@@ -52,7 +50,7 @@
             Assert.Equal(Width, letter.Width, 1);
             if (includeHeight)
             {
-                Assert.Equal(Height, letter.GlyphRectangle.Height, 1);
+                Assert.Equal(Height, letter.BoundingBox.Height, 1);
             }
         }
 

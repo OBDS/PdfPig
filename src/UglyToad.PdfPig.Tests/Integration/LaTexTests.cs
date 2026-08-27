@@ -2,13 +2,8 @@
 
 namespace UglyToad.PdfPig.Tests.Integration
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
     using PdfPig.Core;
     using DocumentLayoutAnalysis.Export;
-    using Xunit;
 
     public class LaTexTests
     {
@@ -39,7 +34,7 @@ namespace UglyToad.PdfPig.Tests.Integration
             {
                 var page = document.GetPage(1);
 
-                Assert.NotEqual(0, page.Letters[0].GlyphRectangle.Height);
+                Assert.NotEqual(0, page.Letters[0].BoundingBox.Height);
             }
         }
 

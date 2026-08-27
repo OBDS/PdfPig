@@ -1,13 +1,11 @@
 ﻿namespace UglyToad.PdfPig.Tests.Graphics
 {
-    using System.Collections.Generic;
     using Content;
     using Logging;
     using PdfFonts;
     using PdfPig.Graphics;
     using PdfPig.Tokens;
     using PdfPig.Core;
-    using System;
     using Tokens;
     using UglyToad.PdfPig.Graphics.Core;
     using UglyToad.PdfPig.Graphics.Operations.TextPositioning;
@@ -62,6 +60,18 @@
         public void PushState()
         {
             StateStack.Push(StateStack.Peek().DeepClone());
+        }
+
+        public void BeginText()
+        {
+            TextMatrices.TextMatrix = TransformationMatrix.Identity;
+            TextMatrices.TextLineMatrix = TransformationMatrix.Identity;
+        }
+
+        public void EndText()
+        {
+            TextMatrices.TextMatrix = TransformationMatrix.Identity;
+            TextMatrices.TextLineMatrix = TransformationMatrix.Identity;
         }
 
         public void ShowText(IInputBytes bytes)
@@ -182,7 +192,7 @@
         {
         }
 
-        public void EndInlineImage(IReadOnlyList<byte> bytes)
+        public void EndInlineImage(Memory<byte> bytes)
         {
         }
 
@@ -204,7 +214,7 @@
             TextMatrices.TextMatrix = matrix.Multiply(TextMatrices.TextMatrix);
         }
 
-        public void SetFlatnessTolerance(decimal tolerance)
+        public void SetFlatnessTolerance(double tolerance)
         {
             GetCurrentState().Flatness = tolerance;
         }
@@ -224,19 +234,19 @@
             GetCurrentState().JoinStyle = join;
         }
 
-        public void SetLineWidth(decimal width)
+        public void SetLineWidth(double width)
         {
             GetCurrentState().LineWidth = width;
         }
 
-        public void SetMiterLimit(decimal limit)
+        public void SetMiterLimit(double limit)
         {
             GetCurrentState().MiterLimit = limit;
         }
 
         public void MoveToNextLineWithOffset()
         {
-            var tdOperation = new MoveToNextLineWithOffset(0, -1 * (decimal)GetCurrentState().FontState.Leading);
+            var tdOperation = new MoveToNextLineWithOffset(0, -1 * GetCurrentState().FontState.Leading);
             tdOperation.Run(this);
         }
 
@@ -272,10 +282,10 @@
             GetCurrentState().FontState.WordSpacing = spacing;
         }
 
-        public void ModifyCurrentTransformationMatrix(double[] value)
+        public void ModifyCurrentTransformationMatrix(TransformationMatrix value)
         {
-            var ctm = GetCurrentState().CurrentTransformationMatrix;
-            GetCurrentState().CurrentTransformationMatrix = TransformationMatrix.FromArray(value).Multiply(ctm);
+            var state = GetCurrentState();
+            state.CurrentTransformationMatrix = value.Multiply(state.CurrentTransformationMatrix);
         }
 
         public void SetCharacterSpacing(double spacing)

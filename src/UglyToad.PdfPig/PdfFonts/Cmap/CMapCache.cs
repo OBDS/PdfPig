@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
     using Parser;
 
@@ -12,7 +13,7 @@
 
         private static readonly CMapParser CMapParser = new CMapParser();
 
-        public static bool TryGet(string name, out CMap result)
+        public static bool TryGet(string name, StackDepthGuard stackDepthGuard, [NotNullWhen(true)] out CMap? result)
         {
             result = null;
 
@@ -23,11 +24,9 @@
                     return true;
                 }
 
-                if (CMapParser.TryParseExternal(name, out result))
+                if (CMapParser.TryParseExternal(name, stackDepthGuard, out result))
                 {
-
                     Cache[name] = result;
-
                     return true;
                 }
 
@@ -35,16 +34,14 @@
             }
         }
 
-        public static CMap Parse(IInputBytes bytes)
+        public static CMap Parse(IInputBytes bytes, StackDepthGuard stackDepthGuard)
         {
-            if (bytes == null)
+            if (bytes is null)
             {
                 throw new ArgumentNullException(nameof(bytes));
             }
 
-            var result = CMapParser.Parse(bytes);
-
-            return result;
+            return CMapParser.Parse(bytes, stackDepthGuard);
         }
     }
 }

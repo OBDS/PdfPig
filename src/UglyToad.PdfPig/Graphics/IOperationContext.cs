@@ -1,6 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Graphics
 {
     using PdfPig.Core;
+    using System;
     using System.Collections.Generic;
     using Tokens;
     using UglyToad.PdfPig.Graphics.Core;
@@ -39,6 +40,20 @@
         /// Saves a copy of the current graphics state on the stack.
         /// </summary>
         void PushState();
+
+        /// <summary>
+        /// Begin a text object (BT). Initialises the text matrix and text line matrix to the
+        /// identity, and gives the renderer an opportunity to start accumulating a text clipping
+        /// path (PDF 1.7 §9.3.1, §9.3.6 — text rendering modes 4–7 affect the clipping path on ET).
+        /// </summary>
+        void BeginText();
+
+        /// <summary>
+        /// End the current text object (ET). Resets the text matrices and gives the renderer an
+        /// opportunity to apply any text clipping path that has been accumulated for rendering
+        /// modes 4–7 (PDF 1.7 §9.3.6).
+        /// </summary>
+        void EndText();
 
         /// <summary>
         /// Shows the text represented by the provided bytes using the current graphics state.
@@ -132,7 +147,7 @@
         /// <summary>
         /// Indicate that a marked content region is started.
         /// </summary>
-        void BeginMarkedContent(NameToken name, NameToken propertyDictionaryName, DictionaryToken properties);
+        void BeginMarkedContent(NameToken name, NameToken? propertyDictionaryName, DictionaryToken? properties);
 
         /// <summary>
         /// Indicates that the current marked content region is complete.
@@ -158,7 +173,7 @@
         /// <summary>
         /// Indicates that the current inline image is complete.
         /// </summary>
-        void EndInlineImage(IReadOnlyList<byte> bytes);
+        void EndInlineImage(Memory<byte> bytes);
 
         /// <summary>
         /// Modify the clipping rule of the current path.
@@ -170,7 +185,7 @@
         /// Flatness is a number in the range 0 to 100; a value of 0 specifies the output device’s default flatness tolerance.
         /// </summary>
         /// <param name="tolerance"></param>
-        void SetFlatnessTolerance(decimal tolerance);
+        void SetFlatnessTolerance(double tolerance);
 
         /// <summary>
         /// Set the line cap style in the graphics state.
@@ -190,12 +205,12 @@
         /// <summary>
         /// Set the line width in the graphics state.
         /// </summary>
-        void SetLineWidth(decimal width);
+        void SetLineWidth(double width);
 
         /// <summary>
         /// Set the miter limit in the graphics state.
         /// </summary>
-        void SetMiterLimit(decimal limit);
+        void SetMiterLimit(double limit);
 
         /// <summary>
         /// Move to the start of the next line.
@@ -242,7 +257,7 @@
         /// <summary>
         /// Modify the current transformation matrix by concatenating the specified matrix.
         /// </summary>
-        void ModifyCurrentTransformationMatrix(double[] value);
+        void ModifyCurrentTransformationMatrix(TransformationMatrix value);
 
         /// <summary>
         /// Set the character spacing to a number expressed in unscaled text space units.

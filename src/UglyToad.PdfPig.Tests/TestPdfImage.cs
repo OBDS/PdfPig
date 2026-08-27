@@ -1,6 +1,5 @@
 ﻿namespace UglyToad.PdfPig.Tests
 {
-    using System.Collections.Generic;
     using UglyToad.PdfPig.Content;
     using UglyToad.PdfPig.Core;
     using UglyToad.PdfPig.Graphics.Colors;
@@ -10,7 +9,8 @@
 
     public class TestPdfImage : IPdfImage
     {
-        public PdfRectangle Bounds { get; set; }
+        public PdfRectangle BoundingBox { get; set; }
+        public PdfRectangle Bounds => BoundingBox;
 
         public int WidthInSamples { get; set; }
 
@@ -18,13 +18,15 @@
 
         public int BitsPerComponent { get; set; } = 8;
 
-        public IReadOnlyList<byte> RawBytes { get; }
+        public Memory<byte> RawMemory { get; }
+
+        public Span<byte> RawBytes => RawMemory.Span;
 
         public RenderingIntent RenderingIntent { get; set; } = RenderingIntent.RelativeColorimetric;
 
         public bool IsImageMask { get; set; }
 
-        public IReadOnlyList<decimal> Decode { get; set; }
+        public IReadOnlyList<double> Decode { get; set; }
 
         public bool Interpolate { get; set; }
 
@@ -34,12 +36,14 @@
 
         public ColorSpaceDetails ColorSpaceDetails { get; set; }
 
-        public IReadOnlyList<byte> DecodedBytes { get; set; }
+        public Memory<byte> DecodedBytes { get; set; }
 
-        public bool TryGetBytes(out IReadOnlyList<byte> bytes)
+        public IPdfImage? MaskImage { get; }
+
+        public bool TryGetBytesAsMemory(out Memory<byte> bytes)
         {
             bytes = DecodedBytes;
-            return bytes != null;
+            return !bytes.IsEmpty;
         }
 
         public bool TryGetPng(out byte[] bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);

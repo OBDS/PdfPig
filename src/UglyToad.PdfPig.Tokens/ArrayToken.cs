@@ -10,8 +10,10 @@
     /// PDF arrays may be heterogeneous; that is, an array's elements may be any combination of numbers, strings,
     /// dictionaries, or any other objects, including other arrays.
     /// </summary>
-    public class ArrayToken : IDataToken<IReadOnlyList<IToken>>
+    public sealed class ArrayToken : IDataToken<IReadOnlyList<IToken>>
     {
+        private readonly int hashCode;
+
         /// <summary>
         /// The tokens contained in this array.
         /// </summary>
@@ -58,6 +60,7 @@
 
             Data = result;
             Length = Data.Count;
+            hashCode = ComputeHashCode();
         }
 
         /// <inheritdoc />
@@ -83,7 +86,30 @@
 
             return builder.ToString();
         }
+
+        private int ComputeHashCode()
+        {
+            HashCode hash = new HashCode();
+            foreach (var t in Data)
+            {
+                hash.Add(t);
+            }
+
+            return hash.ToHashCode();
+        }
         
+        /// <inheritdoc />
+        public override int GetHashCode()
+        {
+            return hashCode;
+        }
+
+        /// <inheritdoc />
+        public override bool Equals(object? obj)
+        {
+            return obj is IToken token && Equals(token);
+        }
+
         /// <inheritdoc />
         public bool Equals(IToken obj)
         {
@@ -92,7 +118,7 @@
                 return true;
             }
 
-            if (!(obj is ArrayToken other))
+            if (obj is not ArrayToken other)
             {
                 return false;
             }

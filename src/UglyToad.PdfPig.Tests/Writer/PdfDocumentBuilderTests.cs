@@ -1,18 +1,16 @@
 ﻿namespace UglyToad.PdfPig.Tests.Writer
 {
-    using System.IO;
-    using System.Linq;
     using Content;
     using Integration;
+    using PdfPig.Actions;
     using PdfPig.Core;
     using PdfPig.Fonts.Standard14Fonts;
     using PdfPig.Tokens;
     using PdfPig.Writer;
-    using System.Collections.Generic;
     using Tests.Fonts.TrueType;
-    using Xunit;
-    using System;
+    using UglyToad.PdfPig.Graphics.Operations.General;
     using UglyToad.PdfPig.Graphics.Operations.InlineImages;
+    using UglyToad.PdfPig.Graphics.Operations.SpecialGraphicsState;
     using UglyToad.PdfPig.Outline;
     using UglyToad.PdfPig.Outline.Destinations;
 
@@ -30,6 +28,66 @@
             var str = OtherEncodings.BytesAsLatin1String(result);
             Assert.StartsWith("%PDF", str);
             Assert.EndsWith("%%EOF", str);
+        }
+
+        [Fact]
+        public void DrawOperationsRestoreLineWidthToDefault()
+        {
+            var builder = new PdfDocumentBuilder();
+            var page = builder.AddPage(PageSize.A4);
+
+            // Each shape drawn with a custom line width is followed by one drawn with the default
+            // line width. Since the default emits no 'w' operation it inherits the graphics state,
+            // so the preceding shape must have restored the line width to 1.
+            page.DrawRectangle(new PdfPoint(20, 700), 100, 50, 7);
+            page.DrawLine(new PdfPoint(20, 650), new PdfPoint(120, 650));
+
+            page.DrawTriangle(new PdfPoint(20, 600), new PdfPoint(70, 640), new PdfPoint(120, 600), 5);
+            page.DrawLine(new PdfPoint(20, 550), new PdfPoint(120, 550));
+
+            page.DrawCircle(new PdfPoint(70, 480), 60, 3);
+            page.DrawLine(new PdfPoint(20, 400), new PdfPoint(120, 400));
+
+            page.DrawEllipsis(new PdfPoint(70, 330), 100, 60, 9);
+            page.DrawLine(new PdfPoint(20, 250), new PdfPoint(120, 250));
+
+            var bytes = builder.Build();
+
+            WriteFile(nameof(DrawOperationsRestoreLineWidthToDefault), bytes);
+
+            using (var document = PdfDocument.Open(bytes))
+            {
+                var paths = document.GetPage(1).Paths;
+
+                Assert.Equal(
+                    [7.0, 1.0, 5.0, 1.0, 3.0, 1.0, 9.0, 1.0],
+                    paths.Select(p => p.LineWidth));
+            }
+        }
+
+        [Fact]
+        public void DrawOperationsWithDefaultLineWidthDoNotChangeLineWidth()
+        {
+            var builder = new PdfDocumentBuilder();
+            var page = builder.AddPage(PageSize.A4);
+
+            // An explicit line width set by the caller must survive shapes drawn with the default
+            // line width, which are documented as leaving the graphics state alone.
+            page.CurrentStream.Operations.Add(new SetLineWidth(4));
+
+            page.DrawRectangle(new PdfPoint(20, 700), 100, 50);
+            page.DrawTriangle(new PdfPoint(20, 600), new PdfPoint(70, 640), new PdfPoint(120, 600));
+            page.DrawCircle(new PdfPoint(70, 480), 60);
+            page.DrawLine(new PdfPoint(20, 400), new PdfPoint(120, 400));
+
+            var bytes = builder.Build();
+
+            using (var document = PdfDocument.Open(bytes))
+            {
+                var paths = document.GetPage(1).Paths;
+
+                Assert.Equal([4.0, 4.0, 4.0, 4.0], paths.Select(p => p.LineWidth));
+            }
         }
 
         [Fact]
@@ -120,17 +178,45 @@
                 output.AddPage(existing, 1);
                 results = output.Build();
                 var pg = existing.GetPage(1);
-                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
-                annotCount = annots.Count;
+                var annots = pg.GetAnnotations().ToArray();
+                annotCount = annots.Length;
                 Assert.Contains(annots, x => x.Type == Annotations.AnnotationType.Link);
             }
 
             using (var rewritten = PdfDocument.Open(results, ParsingOptions.LenientParsingOff))
             {
                 var pg = rewritten.GetPage(1);
-                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
-                Assert.Equal(annotCount - 1, annots.Count);
+                var annots = pg.GetAnnotations().ToArray();
+                Assert.Equal(annotCount - 1, annots.Length);
                 Assert.DoesNotContain(annots, x => x.Type == Annotations.AnnotationType.Link);
+            }
+        }
+
+        [Fact]
+        public void CanFastAddPageAndStripAllAnnots()
+        {
+            var first = IntegrationHelpers.GetDocumentPath("outline.pdf");
+            var contents = File.ReadAllBytes(first);
+
+            byte[] results = null;
+            using (var existing = PdfDocument.Open(contents, ParsingOptions.LenientParsingOff))
+            using (var output = new PdfDocumentBuilder())
+            {
+                output.AddPage(existing, 1, new PdfDocumentBuilder.AddPageOptions
+                {
+                    KeepAnnotations = false
+                });
+                results = output.Build();
+                var pg = existing.GetPage(1);
+                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
+                Assert.NotEmpty(annots);
+            }
+
+            using (var rewritten = PdfDocument.Open(results, ParsingOptions.LenientParsingOff))
+            {
+                var pg = rewritten.GetPage(1);
+                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
+                Assert.Empty(annots);
             }
         }
 
@@ -154,7 +240,7 @@
                 foreach (var offset in document.Structure.CrossReferenceTable.ObjectOffsets)
                 {
                     var obj = document.Structure.GetObject(offset.Key);
-
+                
                     Assert.NotNull(obj);
                 }
             }
@@ -266,8 +352,8 @@
             page.SetStrokeColor(250, 132, 131);
             page.DrawLine(new PdfPoint(25, 70), new PdfPoint(100, 70), 3);
             page.ResetColor();
-            page.DrawRectangle(new PdfPoint(30, 200), 250, 100, 0.5m);
-            page.DrawRectangle(new PdfPoint(30, 100), 250, 100, 0.5m);
+            page.DrawRectangle(new PdfPoint(30, 200), 250, 100, 0.5);
+            page.DrawRectangle(new PdfPoint(30, 100), 250, 100, 0.5);
 
             var file = TrueTypeTestHelper.GetFileBytes("Andada-Regular.ttf");
 
@@ -305,9 +391,9 @@
                     Assert.Equal(readerLetter.Value, writerLetter.Value);
                     Assert.Equal(readerLetter.Location, writerLetter.Location, pointComparer);
                     Assert.Equal(readerLetter.FontSize, writerLetter.FontSize, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Width, writerLetter.GlyphRectangle.Width, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Height, writerLetter.GlyphRectangle.Height, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.BottomLeft, writerLetter.GlyphRectangle.BottomLeft, pointComparer);
+                    Assert.Equal(readerLetter.BoundingBox.Width, writerLetter.BoundingBox.Width, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.Height, writerLetter.BoundingBox.Height, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.BottomLeft, writerLetter.BoundingBox.BottomLeft, pointComparer);
                 }
             }
         }
@@ -448,9 +534,9 @@
                     Assert.Equal(readerLetter.Value, writerLetter.Value);
                     Assert.Equal(readerLetter.Location, writerLetter.Location, pointComparer);
                     Assert.Equal(readerLetter.FontSize, writerLetter.FontSize, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Width, writerLetter.GlyphRectangle.Width, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Height, writerLetter.GlyphRectangle.Height, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.BottomLeft, writerLetter.GlyphRectangle.BottomLeft, pointComparer);
+                    Assert.Equal(readerLetter.BoundingBox.Width, writerLetter.BoundingBox.Width, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.Height, writerLetter.BoundingBox.Height, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.BottomLeft, writerLetter.BoundingBox.BottomLeft, pointComparer);
                 }
             }
         }
@@ -490,13 +576,13 @@
 
             var topLine = new PdfPoint(30, page1.PageSize.Height - 60);
             var letters = page1.AddText("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor", 9, topLine, font);
-            page1.AddText("incididunt ut labore et dolore magna aliqua.", 9, new PdfPoint(30, topLine.Y - letters.Max(x => x.GlyphRectangle.Height) - 5), font);
+            page1.AddText("incididunt ut labore et dolore magna aliqua.", 9, new PdfPoint(30, topLine.Y - letters.Max(x => x.BoundingBox.Height) - 5), font);
 
             var page2Letters = page2.AddText("The very hungry caterpillar ate all the apples in the garden.", 12, topLine, font);
-            var left = (decimal)page2Letters[0].GlyphRectangle.Left;
-            var bottom = (decimal)page2Letters.Min(x => x.GlyphRectangle.Bottom);
-            var right = (decimal)page2Letters[page2Letters.Count - 1].GlyphRectangle.Right;
-            var top = (decimal)page2Letters.Max(x => x.GlyphRectangle.Top);
+            var left = page2Letters[0].BoundingBox.Left;
+            var bottom = page2Letters.Min(x => x.BoundingBox.Bottom);
+            var right = page2Letters[page2Letters.Count - 1].BoundingBox.Right;
+            var top = page2Letters.Max(x => x.BoundingBox.Top);
             page2.SetStrokeColor(10, 250, 69);
             page2.DrawRectangle(new PdfPoint(left, bottom), right - left, top - bottom);
 
@@ -568,10 +654,10 @@
 
                 Assert.NotNull(image);
 
-                Assert.Equal(expectedBounds.BottomLeft, image.Bounds.BottomLeft);
-                Assert.Equal(expectedBounds.TopRight, image.Bounds.TopRight);
+                Assert.Equal(expectedBounds.BottomLeft, image.BoundingBox.BottomLeft);
+                Assert.Equal(expectedBounds.TopRight, image.BoundingBox.TopRight);
 
-                Assert.Equal(imageBytes, image.RawBytes);
+                Assert.Equal(imageBytes, image.RawMemory.ToArray());
             }
         }
 
@@ -614,10 +700,10 @@
                 Assert.Equal(2, page1Images.Count);
 
                 var image1 = page1Images[0];
-                Assert.Equal(expectedBounds1, image1.Bounds);
+                Assert.Equal(expectedBounds1, image1.BoundingBox);
 
                 var image2 = page1Images[1];
-                Assert.Equal(expectedBounds2, image2.Bounds);
+                Assert.Equal(expectedBounds2, image2.BoundingBox);
 
                 var page2Doc = document.GetPage(2);
 
@@ -625,11 +711,11 @@
 
                 Assert.NotNull(image3);
 
-                Assert.Equal(expectedBounds3, image3.Bounds);
+                Assert.Equal(expectedBounds3, image3.BoundingBox);
 
-                Assert.Equal(imageBytes, image1.RawBytes);
-                Assert.Equal(imageBytes, image2.RawBytes);
-                Assert.Equal(imageBytes, image3.RawBytes);
+                Assert.Equal(imageBytes, image1.RawMemory.ToArray());
+                Assert.Equal(imageBytes, image2.RawMemory.ToArray());
+                Assert.Equal(imageBytes, image3.RawMemory.ToArray());
             }
         }
 
@@ -701,8 +787,8 @@
 
                 Assert.NotNull(image);
 
-                Assert.Equal(expectedBounds.BottomLeft, image.Bounds.BottomLeft);
-                Assert.Equal(expectedBounds.TopRight, image.Bounds.TopRight);
+                Assert.Equal(expectedBounds.BottomLeft, image.BoundingBox.BottomLeft);
+                Assert.Equal(expectedBounds.TopRight, image.BoundingBox.TopRight);
 
                 Assert.True(image.TryGetPng(out var png));
                 Assert.NotNull(png);
@@ -738,7 +824,7 @@
             page.SetTextAndFillColor(255, 0, 0);
             page.SetStrokeColor(0, 0, 255);
 
-            page.DrawRectangle(new PdfPoint(20, 100), 200, 100, 1.5m, true);
+            page.DrawRectangle(new PdfPoint(20, 100), 200, 100, 1.5, true);
 
             var file = builder.Build();
             WriteFile(nameof(CanCreateDocumentWithFilledRectangle), file);
@@ -782,6 +868,106 @@
 
                 Assert.Equal("H", h.Value);
                 Assert.Equal("Andada-Regular", h.FontName);
+            }
+        }
+
+        [Fact]
+        public void CanCopyIssue1017()
+        {
+            using (var document = PdfDocument.Open(IntegrationHelpers.GetDocumentPath("_citUR2jB1_ay56u6vELzk.pdf")))
+            {
+                using (var pdfWriter = new PdfDocumentBuilder())
+                {
+                    var page = document.GetPage(1);
+                    
+                    var newPage = pdfWriter.AddPage(page.Width, page.Height);
+                    newPage.CopyFrom(page);
+                    
+                    var b = pdfWriter.Build();
+                    Assert.NotEmpty(b);
+                }
+            }
+        }
+
+        [Fact]
+        public void CopyFromKeepsPositionWhenSourceStreamTransformIsSelfCancelling()
+        {
+            // The pages of this document flip the co-ordinate system with a top level 'cm' and undo the
+            // flip with a second top level 'cm' at the end, so no transform is left active. Merging page 2
+            // onto page 1 must not move or mirror the copied image. See issue #1163.
+            byte[] result;
+            PdfRectangle sourceBounds;
+
+            using (var document = PdfDocument.Open(IntegrationHelpers.GetDocumentPath("issue_1163.pdf"), ParsingOptions.LenientParsingOff))
+            {
+                var source = document.GetPage(2);
+                sourceBounds = Assert.Single(source.GetImages()).BoundingBox;
+
+                var builder = new PdfDocumentBuilder();
+                builder.AddPage(document, 1).CopyFrom(source);
+
+                result = builder.Build();
+            }
+
+            WriteFile(nameof(CopyFromKeepsPositionWhenSourceStreamTransformIsSelfCancelling), result);
+
+            using (var document = PdfDocument.Open(result))
+            {
+                var images = document.GetPage(1).GetImages().ToList();
+
+                Assert.Equal(2, images.Count);
+
+                var copied = images[1].BoundingBox;
+
+                Assert.Equal(sourceBounds.Left, copied.Left, 4);
+                Assert.Equal(sourceBounds.Bottom, copied.Bottom, 4);
+                Assert.Equal(sourceBounds.Width, copied.Width, 4);
+                Assert.Equal(sourceBounds.Height, copied.Height, 4);
+            }
+        }
+
+        [Fact]
+        public void AddPageDoesNotTransformNewContentWhenCopiedStreamsCancelOut()
+        {
+            // The page's transform is split over 2 content streams which, taken together, leave no
+            // transform active. Content added afterwards must not be transformed.
+            byte[] source;
+            {
+                var builder = new PdfDocumentBuilder();
+                var page = builder.AddPage(PageSize.A4);
+
+                page.CurrentStream.Operations.Add(
+                    new ModifyCurrentTransformationMatrix([0.75, 0, 0, -0.75, 0, 841.89]));
+
+                page.NewContentStreamAfter();
+
+                page.CurrentStream.Operations.Add(
+                    new ModifyCurrentTransformationMatrix([1 / 0.75d, 0, 0, -1 / 0.75d, 0, 841.89 / 0.75d]));
+
+                source = builder.Build();
+            }
+
+            byte[] result;
+            using (var document = PdfDocument.Open(source))
+            {
+                var builder = new PdfDocumentBuilder();
+                builder.AddPage(document, 1).DrawRectangle(new PdfPoint(100, 200), 50, 25);
+
+                result = builder.Build();
+            }
+
+            WriteFile(nameof(AddPageDoesNotTransformNewContentWhenCopiedStreamsCancelOut), result);
+
+            using (var document = PdfDocument.Open(result))
+            {
+                var path = Assert.Single(document.GetPage(1).Paths);
+                var box = path.GetBoundingRectangle();
+
+                Assert.NotNull(box);
+                Assert.Equal(100, box.Value.Left, 4);
+                Assert.Equal(200, box.Value.Bottom, 4);
+                Assert.Equal(50, box.Value.Width, 4);
+                Assert.Equal(25, box.Value.Height, 4);
             }
         }
 
@@ -847,8 +1033,8 @@
             page.SetStrokeColor(250, 132, 131);
             page.DrawLine(new PdfPoint(25, 70), new PdfPoint(100, 70), 3);
             page.ResetColor();
-            page.DrawRectangle(new PdfPoint(30, 200), 250, 100, 0.5m);
-            page.DrawRectangle(new PdfPoint(30, 100), 250, 100, 0.5m);
+            page.DrawRectangle(new PdfPoint(30, 200), 250, 100, 0.5);
+            page.DrawRectangle(new PdfPoint(30, 100), 250, 100, 0.5);
 
             var file = TrueTypeTestHelper.GetFileBytes("Andada-Regular.ttf");
 
@@ -886,9 +1072,9 @@
                     Assert.Equal(readerLetter.Value, writerLetter.Value);
                     Assert.Equal(readerLetter.Location, writerLetter.Location, pointComparer);
                     Assert.Equal(readerLetter.FontSize, writerLetter.FontSize, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Width, writerLetter.GlyphRectangle.Width, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.Height, writerLetter.GlyphRectangle.Height, comparer);
-                    Assert.Equal(readerLetter.GlyphRectangle.BottomLeft, writerLetter.GlyphRectangle.BottomLeft, pointComparer);
+                    Assert.Equal(readerLetter.BoundingBox.Width, writerLetter.BoundingBox.Width, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.Height, writerLetter.BoundingBox.Height, comparer);
+                    Assert.Equal(readerLetter.BoundingBox.BottomLeft, writerLetter.BoundingBox.BottomLeft, pointComparer);
                 }
             }
         }
@@ -948,7 +1134,7 @@
                 {
                     Assert.Equal(2, document.NumberOfPages);
                     Assert.True(document.Structure.CrossReferenceTable.ObjectOffsets.Count <= 29,
-                        "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
+                     "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
                 }
             }
         }
@@ -970,7 +1156,7 @@
                 {
                     Assert.Equal(2, document.NumberOfPages);
                     Assert.True(document.Structure.CrossReferenceTable.ObjectOffsets.Count <= 29,
-                        "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
+                       "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
                 }
             }
         }
@@ -1113,7 +1299,7 @@
                         {
                             location += letter.Location.X;
                             location += letter.Location.Y;
-                            location += letter.Font.Name.Length;
+                            location += letter.FontDetails.Name.Length;
                         }
                     }
                 }
@@ -1239,18 +1425,108 @@
                     bookmarks.GetNodes().OfType<UriBookmarkNode>().Select(node => node.Uri));
 
                 Assert.Equal(
-                    new[] 
+                    new byte[] 
                     {
-                        ExplicitDestinationType.XyzCoordinates,
-                        ExplicitDestinationType.FitPage,
-                        ExplicitDestinationType.FitRectangle,
-                        ExplicitDestinationType.FitBoundingBox,
-                        ExplicitDestinationType.FitBoundingBoxHorizontally,
-                        ExplicitDestinationType.FitBoundingBoxVertically,
-                        ExplicitDestinationType.FitHorizontally,
-                        ExplicitDestinationType.FitVertically,
+                        (byte)ExplicitDestinationType.XyzCoordinates,
+                        (byte)ExplicitDestinationType.FitPage,
+                        (byte)ExplicitDestinationType.FitRectangle,
+                        (byte)ExplicitDestinationType.FitBoundingBox,
+                        (byte)ExplicitDestinationType.FitBoundingBoxHorizontally,
+                        (byte)ExplicitDestinationType.FitBoundingBoxVertically,
+                        (byte)ExplicitDestinationType.FitHorizontally,
+                        (byte)ExplicitDestinationType.FitVertically,
                     },
-                    bookmarks.GetNodes().OfType<DocumentBookmarkNode>().Select(node => node.Destination.Type));
+                    bookmarks.GetNodes().OfType<DocumentBookmarkNode>().Select(node => (byte)node.Destination.Type));
+            }
+        }
+
+        [Fact]
+        public void CanAddLinkToPage()
+        {
+            var builder = new PdfDocumentBuilder();
+            var page = builder.AddPage(PageSize.A4);
+            var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+
+            var linkArea = new PdfRectangle(25, 690, 200, 720);
+            page.AddLink("https://github.com", linkArea);
+
+            var bytes = builder.Build();
+            WriteFile(nameof(CanAddLinkToPage), bytes);
+
+            using (var document = PdfDocument.Open(bytes))
+            {
+                Assert.Equal(1, document.NumberOfPages);
+                var page1 = document.GetPage(1);
+
+                var annotations = page1.GetAnnotations().ToList();
+                Assert.Single(annotations);
+
+                var linkAnnotation = annotations[0];
+                Assert.Equal(Annotations.AnnotationType.Link, linkAnnotation.Type);
+                Assert.Equal(linkArea, linkAnnotation.Rectangle);
+
+                // Verify the URI link target
+                Assert.NotNull(linkAnnotation.Action);
+                var uriAction = Assert.IsType<UriAction>(linkAnnotation.Action);
+                Assert.Equal("https://github.com", uriAction.Uri);
+            }
+        }
+
+        [Fact]
+        public void CanAddAndModifyPageWithArrayReference()
+        {
+            using var builder = new PdfDocumentBuilder();
+            using (var document = PdfDocument.Open(IntegrationHelpers.GetDocumentPath("GHOSTSCRIPT-697507-0.pdf")))
+            {
+                var pageBuilder = builder.AddPage(document, 1);
+                pageBuilder.NewContentStreamAfter();
+                pageBuilder.SetStrokeColor(0, 0, 0);
+            }
+            var bytes = builder.Build();
+
+            using (var document = PdfDocument.Open(bytes))
+            {
+                Assert.NotNull(document.GetPage(1).Content);
+            }
+        }
+
+        [Fact]
+        public void CanAddInternalLinkToPage()
+        {
+            var builder = new PdfDocumentBuilder();
+            var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+
+            var page1 = builder.AddPage(PageSize.A4);
+            var page2 = builder.AddPage(PageSize.A4);
+
+            var linkArea = new PdfRectangle(25, 690, 200, 720);
+            var coordinates = new ExplicitDestinationCoordinates(25, 750);
+            var destination = new ExplicitDestination(1, ExplicitDestinationType.XyzCoordinates, coordinates);
+            page2.AddLink(destination, linkArea);
+
+            var bytes = builder.Build();
+            WriteFile(nameof(CanAddInternalLinkToPage), bytes);
+
+            using (var document = PdfDocument.Open(bytes))
+            {
+                Assert.Equal(2, document.NumberOfPages);
+
+                var page2Doc = document.GetPage(2);
+
+                var annotations = page2Doc.GetAnnotations().ToList();
+                Assert.Single(annotations);
+
+                var linkAnnotation = annotations[0];
+                Assert.Equal(Annotations.AnnotationType.Link, linkAnnotation.Type);
+                Assert.Equal(linkArea, linkAnnotation.Rectangle);
+
+                // Verify the link destination
+                Assert.NotNull(linkAnnotation.Action);
+                var goToAction = Assert.IsType<GoToAction>(linkAnnotation.Action);
+                Assert.Equal(1, goToAction.Destination.PageNumber);
+                Assert.Equal(ExplicitDestinationType.XyzCoordinates, goToAction.Destination.Type);
+                Assert.Equal(25, goToAction.Destination.Coordinates.Left);
+                Assert.Equal(750, goToAction.Destination.Coordinates.Top);
             }
         }
 
@@ -1291,10 +1567,12 @@
             Objects++;
         }
 
-        public void WriteCrossReferenceTable(IReadOnlyDictionary<IndirectReference, long> objectOffsets,
+        public void WriteCrossReferenceTable(
+            IReadOnlyDictionary<IndirectReference, long> objectOffsets,
             IndirectReference catalogToken,
             Stream outputStream,
-            IndirectReference? documentInformationReference)
+            IndirectReference? documentInformationReference,
+            long? prevTableLocation)
         {
             WroteCrossReferenceTable = true;
         }

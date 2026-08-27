@@ -5,7 +5,6 @@
     using System.Globalization;
     using System.Text;
     using Core;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// Brute force search for all objects in the document.
@@ -19,10 +18,9 @@
         /// </summary>
         /// <param name="bytes">The bytes of the document.</param>
         /// <returns>The object keys and offsets for the objects in this document.</returns>
-        [NotNull]
-        public static IReadOnlyDictionary<IndirectReference, long> GetObjectLocations(IInputBytes bytes)
+        public static IReadOnlyDictionary<IndirectReference, XrefLocation> GetObjectLocations(IInputBytes bytes)
         {
-            if (bytes == null)
+            if (bytes is null)
             {
                 throw new ArgumentNullException(nameof(bytes));
             }
@@ -31,7 +29,7 @@
 
             var lastEndOfFile = GetLastEndOfFileMarker(bytes);
 
-            var results = new Dictionary<IndirectReference, long>();
+            var results = new Dictionary<IndirectReference, XrefLocation>();
 
             var generationBytes = new StringBuilder();
             var objectNumberBytes = new StringBuilder();
@@ -82,6 +80,31 @@
                         {
                             bytes.MoveNext();
                             currentOffset++;
+                        }
+                    }
+                    else if (ReadHelper.IsWhitespace(bytes.CurrentByte))
+                    {
+                        var next = bytes.Peek();
+                        if (next.HasValue && next.Value == 'o')
+                        {
+                            if (ReadHelper.IsString(bytes, " obj"))
+                            {
+                                currentlyInObject = false;
+                                currentOffset--;
+                                loopProtection = 0;
+                            }
+                            else
+                            {
+                                bytes.MoveNext();
+                                currentOffset++;
+                                loopProtection = 0;
+                            }
+                        }
+                        else
+                        {
+                            bytes.MoveNext();
+                            currentOffset++;
+                            loopProtection = 0;
                         }
                     }
                     else
@@ -151,14 +174,14 @@
                 var obj = long.Parse(objectNumberBytes.ToString(), CultureInfo.InvariantCulture);
                 var generation = int.Parse(generationBytes.ToString(), CultureInfo.InvariantCulture);
 
-                results[new IndirectReference(obj, generation)] = bytes.CurrentOffset;
+                results[new IndirectReference(obj, generation)] = XrefLocation.File(bytes.CurrentOffset);
 
                 generationBytes.Clear();
                 objectNumberBytes.Clear();
 
                 currentlyInObject = true;
 
-                currentOffset++;
+                currentOffset += objBuffer.Length;
 
                 bytes.Seek(currentOffset);
                 loopProtection = 0;
@@ -198,7 +221,7 @@
             return long.MaxValue;
         }
 
-        private static bool IsStartObjMarker(byte[] data)
+        private static bool IsStartObjMarker(ReadOnlySpan<byte> data)
         {
             if (!ReadHelper.IsWhitespace(data[0]))
             {

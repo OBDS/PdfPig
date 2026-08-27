@@ -17,22 +17,27 @@
         /// </summary>
         public static DocumentInformation Create(IPdfTokenScanner pdfTokenScanner, TrailerDictionary trailer, bool isLenientParsing)
         {
-            if (!trailer.Info.HasValue)
+            var token = trailer.Info;
+            if (token is IndirectReferenceToken reference)
+            {
+                token = DirectObjectFinder.Get<IToken>(reference.Data, pdfTokenScanner);
+            }
+
+            if (token == null)
             {
                 return DocumentInformation.Default;
             }
-
-            var token = DirectObjectFinder.Get<IToken>(trailer.Info.Value, pdfTokenScanner);
+            
             if (token is DictionaryToken infoParsed)
             {
-                var title = GetEntryOrDefault(infoParsed, NameToken.Title);
-                var author = GetEntryOrDefault(infoParsed, NameToken.Author);
-                var subject = GetEntryOrDefault(infoParsed, NameToken.Subject);
-                var keywords = GetEntryOrDefault(infoParsed, NameToken.Keywords);
-                var creator = GetEntryOrDefault(infoParsed, NameToken.Creator);
-                var producer = GetEntryOrDefault(infoParsed, NameToken.Producer);
-                var creationDate = GetEntryOrDefault(infoParsed, NameToken.CreationDate);
-                var modifiedDate = GetEntryOrDefault(infoParsed, NameToken.ModDate);
+                var title = GetEntryOrDefault(infoParsed, NameToken.Title, pdfTokenScanner);
+                var author = GetEntryOrDefault(infoParsed, NameToken.Author, pdfTokenScanner);
+                var subject = GetEntryOrDefault(infoParsed, NameToken.Subject, pdfTokenScanner);
+                var keywords = GetEntryOrDefault(infoParsed, NameToken.Keywords, pdfTokenScanner);
+                var creator = GetEntryOrDefault(infoParsed, NameToken.Creator, pdfTokenScanner);
+                var producer = GetEntryOrDefault(infoParsed, NameToken.Producer, pdfTokenScanner);
+                var creationDate = GetEntryOrDefault(infoParsed, NameToken.CreationDate, pdfTokenScanner);
+                var modifiedDate = GetEntryOrDefault(infoParsed, NameToken.ModDate, pdfTokenScanner);
 
                 return new DocumentInformation(infoParsed, title, author, subject,
                     keywords, creator, producer, creationDate, modifiedDate);
@@ -60,18 +65,33 @@
                 return DocumentInformation.Default;
             }
 
-            throw new PdfDocumentFormatException($"Unknown document information token was found {token.GetType().Name}");
+            throw new PdfDocumentFormatException($"Unknown document information token was found {token?.GetType().Name}");
         }
 
-        private static string GetEntryOrDefault(DictionaryToken infoDictionary, NameToken key)
+        private static string? GetEntryOrDefault(DictionaryToken infoDictionary, NameToken key, IPdfTokenScanner pdfTokenScanner)
         {
-            if (infoDictionary == null)
+            if (infoDictionary is null)
             {
                 return null;
             }
 
             if (!infoDictionary.TryGet(key, out var value))
             {
+                return null;
+            }
+
+            if (value is IndirectReferenceToken idr)
+            {
+                if (DirectObjectFinder.TryGet(idr, pdfTokenScanner, out StringToken? strI))
+                {
+                    return strI.Data;
+                }
+
+                if (DirectObjectFinder.TryGet(idr, pdfTokenScanner, out HexToken? hexI))
+                {
+                    return hexI.Data;
+                }
+
                 return null;
             }
 

@@ -1,9 +1,6 @@
 namespace UglyToad.PdfPig.Tests.Integration
 {
-    using System.IO;
-    using System.Linq;
     using Content;
-    using Xunit;
 
     public class Type0FontTests
     {
@@ -54,8 +51,10 @@ namespace UglyToad.PdfPig.Tests.Integration
             {
                 var page = document.GetPage(1);
 
-                Assert.Contains(page.Letters, x => x.GlyphRectangle.Width != 0);
-                Assert.Contains(page.Letters, x => x.GlyphRectangle.Height != 0);
+                Assert.Contains(page.Letters, x => x.BoundingBox.Width != 0);
+                Assert.Contains(page.Letters, x => x.BoundingBox.Height != 0);
+                Assert.Contains(page.Letters, x => x.GlyphRectangleLoose.Width != 0);
+                Assert.Contains(page.Letters, x => x.GlyphRectangleLoose.Height != 0);
             }
         }
     }

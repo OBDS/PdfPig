@@ -1,0 +1,58 @@
+name: Run Common Crawl Tests
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ["0000-0001", "0002-0003", "0004-0005", "0006-0007", "0008-0009", "0010-0011", "0012-0013"]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up dotnet core
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+          
+      - name: Restore corpus cache
+        id: restore-corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/
+          key: ${{ runner.os }}-pdf-corpus-${{ matrix.pair }}
+
+      - name: Download corpus if cache missed
+        if: steps.restore-corpus.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p corpus/zipfiles
+          cd corpus/zipfiles
+          for file in $(echo "${{ matrix.pair }}" | tr '-' ' '); do
+            echo "Downloading $file.zip"
+            wget -nv "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/$file.zip" -O "$file.zip"
+          done
+          cd ..
+          unzip 'zipfiles/*.zip' -d extracted
+          # run: rm -f zipfiles/*.zip
+
+      - name: Remove unwanted test files
+        run: |
+          while read f || [ -n "$f" ]; do
+            full="corpus/extracted/$f"
+            if [ -f "$full" ]; then
+              echo "Removing $full"
+              rm "$full"
+            fi
+          done < tools/common-crawl-ignore.txt
+
+      - name: Run tests against corpus
+        run: dotnet run --project tools/UglyToad.PdfPig.ConsoleRunner/UglyToad.PdfPig.ConsoleRunner.csproj "corpus/extracted" --configuration Release

@@ -9,6 +9,8 @@
     using PdfPig.Core;
     using Tokenization.Scanner;
     using Tokens;
+    using UglyToad.PdfPig.Graphics.Colors;
+    using UglyToad.PdfPig.XObjects;
 
     /// <summary>
     /// Inline Image Builder.
@@ -18,19 +20,21 @@
         /// <summary>
         /// Inline image properties.
         /// </summary>
-        public IReadOnlyDictionary<NameToken, IToken> Properties { get; internal set; }
+        public IReadOnlyDictionary<NameToken, IToken>? Properties { get; internal set; }
 
         /// <summary>
         /// Inline image bytes.
         /// </summary>
-        public IReadOnlyList<byte> Bytes { get; internal set; }
+        public Memory<byte> Bytes { get; internal set; }
 
-        internal InlineImage CreateInlineImage(TransformationMatrix transformationMatrix, ILookupFilterProvider filterProvider,
+        internal InlineImage CreateInlineImage(
+            in TransformationMatrix transformationMatrix,
+            ILookupFilterProvider filterProvider,
             IPdfTokenScanner tokenScanner,
             RenderingIntent defaultRenderingIntent,
             IResourceStore resourceStore)
         {
-            if (Properties == null || Bytes == null)
+            if (Properties is null)
             {
                 throw new InvalidOperationException($"Inline image builder not completely defined before calling {nameof(CreateInlineImage)}.");
             }
@@ -47,14 +51,39 @@
             var isMask = maskToken?.Data == true;
 
             var bitsPerComponent = GetByKeys<NumericToken>(NameToken.BitsPerComponent, NameToken.Bpc, !isMask)?.Int ?? 1;
+            NameToken? colorSpaceName = null;
 
-            NameToken colorSpaceName = null;
+            var imgDic = new DictionaryToken(Properties ?? new Dictionary<NameToken, IToken>()).Resolve(tokenScanner);
+
+            XObjectImage? softMaskImage = null;
+            if (imgDic.TryGet(NameToken.Smask, tokenScanner, out StreamToken? sMaskToken))
+            {
+                if (!sMaskToken.StreamDictionary.TryGet(NameToken.Subtype, out NameToken softMaskSubType) || !softMaskSubType.Equals(NameToken.Image))
+                {
+                    throw new Exception("The SMask dictionary does not contain a 'Subtype' entry, or its value is not 'Image'.");
+                }
+
+                if (!sMaskToken.StreamDictionary.TryGet(NameToken.ColorSpace, out NameToken softMaskColorSpace) || !softMaskColorSpace.Equals(NameToken.Devicegray))
+                {
+                    throw new Exception("The SMask dictionary does not contain a 'ColorSpace' entry, or its value is not 'Devicegray'.");
+                }
+
+                if (sMaskToken.StreamDictionary.ContainsKey(NameToken.Mask) || sMaskToken.StreamDictionary.ContainsKey(NameToken.Smask))
+                {
+                    throw new Exception("The SMask dictionary contains a 'Mask' or 'Smask' entry.");
+                }
+
+                XObjectContentRecord softMaskImageRecord = new XObjectContentRecord(XObjectType.Image, sMaskToken, TransformationMatrix.Identity,
+                    defaultRenderingIntent, DeviceGrayColorSpaceDetails.Instance);
+
+                softMaskImage = XObjectFactory.ReadImage(softMaskImageRecord, tokenScanner, filterProvider, resourceStore);
+            }
 
             if (!isMask)
             {
                 colorSpaceName = GetByKeys<NameToken>(NameToken.ColorSpace, NameToken.Cs, false);
 
-                if (colorSpaceName == null)
+                if (colorSpaceName is null)
                 {
                     var colorSpaceArray = GetByKeys<ArrayToken>(NameToken.ColorSpace, NameToken.Cs, true);
 
@@ -72,8 +101,6 @@
                 }
             }
 
-            var imgDic = new DictionaryToken(Properties ?? new Dictionary<NameToken, IToken>());
-
             var details = resourceStore.GetColorSpaceDetails(colorSpaceName, imgDic);
 
             var renderingIntent = GetByKeys<NameToken>(NameToken.Intent, null, false)?.Data?.ToRenderingIntent() ?? defaultRenderingIntent;
@@ -82,7 +109,7 @@
 
             var filterName = GetByKeys<NameToken>(NameToken.Filter, NameToken.F, false);
 
-            if (filterName == null)
+            if (filterName is null)
             {
                 var filterArray = GetByKeys<ArrayToken>(NameToken.Filter, NameToken.F, false);
 
@@ -96,34 +123,38 @@
                 filterNames.Add(filterName);
             }
 
-            var filters = filterProvider.GetNamedFilters(filterNames);
+            var decodeRaw = GetByKeys<ArrayToken>(NameToken.Decode, NameToken.D, false) ?? new ArrayToken(Array.Empty<IToken>());
 
-            var decodeRaw = GetByKeys<ArrayToken>(NameToken.Decode, NameToken.D, false) ?? new ArrayToken(EmptyArray<IToken>.Instance);
-
-            var decode = decodeRaw.Data.OfType<NumericToken>().Select(x => x.Data).ToArray();
+            var decode = decodeRaw.Data.OfType<NumericToken>().Select(x => x.Double).ToArray();
 
             var interpolate = GetByKeys<BooleanToken>(NameToken.Interpolate, NameToken.I, false)?.Data ?? false;
 
-            return new InlineImage(bounds, width, height, bitsPerComponent, isMask, renderingIntent, interpolate, decode, Bytes,
-                filters,
-                imgDic,
-                details);
+            return new InlineImage(bounds, width, height, bitsPerComponent,
+                isMask, renderingIntent, interpolate, decode, Bytes,
+                filterProvider, filterNames, imgDic, details, softMaskImage);
         }
 
+#nullable disable
+
         // ReSharper disable once ParameterOnlyUsedForPreconditionCheck.Local
-        private T GetByKeys<T>(NameToken name1, NameToken name2, bool required) where T : IToken
+        // <paramref name="name1"/> is the full key name, <paramref name="name2"/> the abbreviated
+        // inline-image form. ISO 32000-2 (PDF 2.0) Table 91 NOTE: "If both the abbreviated and the
+        // full form of a key are present, the abbreviated key takes precedence." So the abbreviated
+        // name is looked up first and the full name is only used as a fallback.
+        private T GetByKeys<T>(NameToken name1, NameToken name2, bool required)
+            where T : class, IToken
         {
+            if (name2 is not null)
+            {
+                if (Properties.TryGetValue(name2, out var abbreviated) && abbreviated is T abbreviatedResult)
+                {
+                    return abbreviatedResult;
+                }
+            }
+
             if (Properties.TryGetValue(name1, out var val) && val is T result)
             {
                 return result;
-            }
-
-            if (name2 != null)
-            {
-                if (Properties.TryGetValue(name2, out val) && val is T result2)
-                {
-                    return result2;
-                }
             }
 
             if (required)
@@ -131,7 +162,7 @@
                 throw new PdfDocumentFormatException($"Inline image dictionary missing required entry {name1}/{name2}.");
             }
 
-            return default(T);
+            return null;
         }
     }
 }

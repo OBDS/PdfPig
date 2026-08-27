@@ -38,7 +38,7 @@
                     lastX = letter.Location.X;
                 }
 
-                if (lastLetter == null)
+                if (lastLetter is null)
                 {
                     if (string.IsNullOrWhiteSpace(letter.Value))
                     {
@@ -72,7 +72,7 @@
                     continue;
                 }
 
-                var letterHeight = Math.Max(lastLetter.GlyphRectangle.Height, letter.GlyphRectangle.Height);
+                var letterHeight = Math.Max(lastLetter.BoundingBox.Height, letter.BoundingBox.Height);
 
                 var gap = letter.Location.X - (lastLetter.Location.X + lastLetter.Width);
                 var nextToLeft = letter.Location.X < lastX.Value - 1;

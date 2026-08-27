@@ -1,9 +1,11 @@
 ﻿namespace UglyToad.PdfPig.Images.Png
 {
+    using System;
+
     /// <summary>
     /// A pixel in a <see cref="Png"/> image.
     /// </summary>
-    internal readonly struct Pixel
+    internal readonly struct Pixel : IEquatable<Pixel>
     {
         /// <summary>
         /// The red value for the pixel.
@@ -76,18 +78,9 @@
         }
 
         /// <inheritdoc />
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (obj is Pixel pixel)
-            {
-                return IsGrayscale == pixel.IsGrayscale
-                       && A == pixel.A
-                       && R == pixel.R
-                       && G == pixel.G
-                       && B == pixel.B;
-            }
-
-            return false;
+            return obj is Pixel other && Equals(other);
         }
 
         /// <summary>
@@ -103,21 +96,25 @@
         /// <inheritdoc />
         public override int GetHashCode()
         {
-            unchecked
-            {
-                var hashCode = R.GetHashCode();
-                hashCode = (hashCode * 397) ^ G.GetHashCode();
-                hashCode = (hashCode * 397) ^ B.GetHashCode();
-                hashCode = (hashCode * 397) ^ A.GetHashCode();
-                hashCode = (hashCode * 397) ^ IsGrayscale.GetHashCode();
-                return hashCode;
-            }
+            return HashCode.Combine(R, G, B, A, IsGrayscale);
         }
 
         /// <inheritdoc />
         public override string ToString()
         {
             return $"({R}, {G}, {B}, {A})";
+        }
+
+        /// <inheritdoc/>
+        public static bool operator ==(Pixel left, Pixel right)
+        {
+            return left.Equals(right);
+        }
+
+        /// <inheritdoc/>
+        public static bool operator !=(Pixel left, Pixel right)
+        {
+            return !(left == right);
         }
     }
 }

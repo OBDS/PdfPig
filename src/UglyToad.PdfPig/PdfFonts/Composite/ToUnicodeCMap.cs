@@ -1,18 +1,17 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Composite
 {
     using System;
+    using System.Diagnostics.CodeAnalysis;
     using Cmap;
     using Core;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// Defines the information content (actual text) of the font
     /// as opposed to the display format.
     /// </summary>
-    internal class ToUnicodeCMap
+    internal sealed class ToUnicodeCMap
     {
-        [CanBeNull]
-        private readonly CMap cMap;
+        private readonly CMap? cMap;
 
         /// <summary>
         /// Does the font provide a CMap to map CIDs to Unicode values?
@@ -24,22 +23,21 @@
         /// </summary>
         public bool IsUsingIdentityAsUnicodeMap { get; }
 
-        public ToUnicodeCMap([CanBeNull]CMap cMap)
+        public ToUnicodeCMap(CMap? cMap)
         {
             this.cMap = cMap;
 
-            if (CanMapToUnicode)
+            if (cMap != null)
             {
-                IsUsingIdentityAsUnicodeMap =
-                    cMap.Name?.StartsWith("Identity-", StringComparison.InvariantCultureIgnoreCase) == true;
+                IsUsingIdentityAsUnicodeMap = cMap.Name?.StartsWith("Identity-", StringComparison.InvariantCultureIgnoreCase) == true;
             }
         }
 
-        public bool TryGet(int code, out string value)
+        public bool TryGet(int code, [NotNullWhen(true)] out string? value)
         {
             value = null;
 
-            if (!CanMapToUnicode)
+            if (cMap is null)
             {
                 return false;
             }
@@ -47,9 +45,9 @@
             return cMap.TryConvertToUnicode(code, out value);
         }
 
-        public int ReadCode(IInputBytes inputBytes)
+        public int ReadCode(IInputBytes inputBytes, bool useLenientParsing)
         {
-            return cMap.ReadCode(inputBytes);
+            return cMap!.ReadCode(inputBytes, useLenientParsing);
         }
     }
 }

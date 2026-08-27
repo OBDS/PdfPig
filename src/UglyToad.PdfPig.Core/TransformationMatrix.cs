@@ -1,15 +1,12 @@
 ﻿namespace UglyToad.PdfPig.Core
 {
-    using System;
-    using System.Collections.Generic;
     using System.Diagnostics.Contracts;
-    using System.Linq;
     using static UglyToad.PdfPig.Core.PdfSubpath;
 
     /// <summary>
     /// Specifies the conversion from the transformed coordinate space to the original untransformed coordinate space.
     /// </summary>
-    public readonly struct TransformationMatrix
+    public readonly struct TransformationMatrix : IEquatable<TransformationMatrix>
     {
         /// <summary>
         /// The default <see cref="TransformationMatrix"/>.
@@ -28,7 +25,8 @@
         /// <summary>
         /// Create a new <see cref="TransformationMatrix"/> with the X and Y scaling values set.
         /// </summary>
-        public static TransformationMatrix GetScaleMatrix(double scaleX, double scaleY) => new TransformationMatrix(scaleX, 0, 0,
+        public static TransformationMatrix GetScaleMatrix(double scaleX, double scaleY) => new TransformationMatrix(
+            scaleX, 0, 0,
             0, scaleY, 0,
             0, 0, 1);
 
@@ -84,22 +82,27 @@
         /// The value at (0, 0) - The scale for the X dimension.
         /// </summary>
         public readonly double A;
+
         /// <summary>
         /// The value at (0, 1).
         /// </summary>
         public readonly double B;
+
         /// <summary>
         /// The value at (1, 0).
         /// </summary>
         public readonly double C;
+
         /// <summary>
         /// The value at (1, 1) - The scale for the Y dimension.
         /// </summary>
         public readonly double D;
+
         /// <summary>
         /// The value at (2, 0) - translation in X.
         /// </summary>
         public readonly double E;
+
         /// <summary>
         /// The value at (2, 1) - translation in Y.
         /// </summary>
@@ -132,53 +135,27 @@
                     throw new ArgumentOutOfRangeException(nameof(col), "Cannot access negative columns in a matrix.");
                 }
 
-                switch (row)
-                {
-                    case 0:
-                    {
-                        switch (col)
-                        {
-                            case 0:
-                                return A;
-                            case 1:
-                                return B;
-                            case 2:
-                                return row1;
-                            default:
-                                    throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.");
-                        }
-                    }
-                    case 1:
-                    {
-                        switch (col)
-                        {
-                            case 0:
-                                return C;
-                            case 1:
-                                return D;
-                            case 2:
-                                return row2;
-                            default:
-                                    throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.");
-                        }
-                    }
-                    case 2:
-                    {
-                        switch (col)
-                        {
-                            case 0:
-                                return E;
-                            case 1:
-                                return F;
-                            case 2:
-                                return row3;
-                            default:
-                                    throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.");
-                        }
-                    }
-                    default:
-                        throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.");
-                }
+                return row switch {
+                    0 => col switch {
+                        0 => A,
+                        1 => B,
+                        2 => row1,
+                        _ => throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.")
+                    },
+                    1 => col switch {
+                        0 => C,
+                        1 => D,
+                        2 => row2,
+                        _ => throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.")
+                    },
+                    2 => col switch {
+                        0 => E,
+                        1 => F,
+                        2 => row3,
+                        _ => throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.")
+                    },
+                    _ => throw new ArgumentOutOfRangeException($"Trying to access {row}, {col} which was not in the value array.")
+                };
             }
         }
 
@@ -195,7 +172,7 @@
         /// Create a new <see cref="TransformationMatrix"/>.
         /// </summary>
         /// <param name="value">The 9 values of the matrix.</param>
-        public TransformationMatrix(double[] value) : this(value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7], value[8])
+        public TransformationMatrix(ReadOnlySpan<double> value) : this(value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7], value[8])
         {
         }
 
@@ -223,10 +200,20 @@
         [Pure]
         public PdfPoint Transform(PdfPoint original)
         {
-            var x = A * original.X + C * original.Y + E;
-            var y = B * original.X + D * original.Y + F;
+            (double x, double y) xy = Transform(original.X, original.Y);
+            return new PdfPoint(xy.x, xy.y);
+        }
 
-            return new PdfPoint(x, y);
+        /// <summary>
+        /// Transform a point using this transformation matrix.
+        /// </summary>
+        /// <param name="x">The original point X coordinate.</param>
+        /// <param name="y">The original point Y coordinate.</param>
+        /// <returns>A new point which is the result of applying this transformation matrix.</returns>
+        [Pure]
+        public (double x, double y) Transform(double x, double y)
+        {
+            return (A * x + C * y + E, B * x + D * y + F);
         }
 
         /// <summary>
@@ -237,9 +224,18 @@
         [Pure]
         public double TransformX(double x)
         {
-            var xt = A * x + C * 0 + E;
+            return A * x + E; // + C * 0 
+        }
 
-            return xt;
+
+        /// <summary>
+        /// Transform an Y coordinate using this transformation matrix.
+        /// </summary>
+        /// <param name="y">The Y coordinate.</param>
+        /// <returns>The transformed Y coordinate.</returns>
+        public double TransformY(double y)
+        {
+            return D * y + F;
         }
 
         /// <summary>
@@ -279,12 +275,18 @@
                     var to = Transform(line.To);
                     trSubpath.LineTo(to.X, to.Y);
                 }
-                else if (c is BezierCurve curve)
+                else if (c is CubicBezierCurve cubic)
                 {
-                    var first = Transform(curve.FirstControlPoint);
-                    var second = Transform(curve.SecondControlPoint);
-                    var end = Transform(curve.EndPoint);
+                    var first = Transform(cubic.FirstControlPoint);
+                    var second = Transform(cubic.SecondControlPoint);
+                    var end = Transform(cubic.EndPoint);
                     trSubpath.BezierCurveTo(first.X, first.Y, second.X, second.Y, end.X, end.Y);
+                }
+                else if (c is QuadraticBezierCurve quadratic)
+                {
+                    var control = Transform(quadratic.ControlPoint);
+                    var end = Transform(quadratic.EndPoint);
+                    trSubpath.BezierCurveTo(control.X, control.Y, end.X, end.Y);
                 }
                 else if (c is Close)
                 {
@@ -351,15 +353,7 @@
         /// </summary>
         /// <param name="values">Either all 9 values of the matrix, 6 values in the default PDF order or the 4 values of the top left square.</param>
         /// <returns></returns>
-        public static TransformationMatrix FromArray(decimal[] values)
-            => FromArray(values.Select(x => (double)x).ToArray());
-
-        /// <summary>
-        /// Create a new <see cref="TransformationMatrix"/> from the values.
-        /// </summary>
-        /// <param name="values">Either all 9 values of the matrix, 6 values in the default PDF order or the 4 values of the top left square.</param>
-        /// <returns></returns>
-        public static TransformationMatrix FromArray(double[] values)
+        public static TransformationMatrix FromArray(ReadOnlySpan<double> values)
         {
             if (values.Length == 9)
             {
@@ -380,7 +374,7 @@
                     0, 0, 1);
             }
 
-            throw new ArgumentException("The array must either define all 9 elements of the matrix or all 6 key elements. Instead array was: " + values);
+            throw new ArgumentException("The array must either define all 9 elements of the matrix or all 6 key elements. Instead array was: " + string.Join(", ", values.ToArray()));
         }
 
         /// <summary>
@@ -389,7 +383,7 @@
         /// <param name="matrix">The matrix to multiply</param>
         /// <returns>The resulting matrix.</returns>
         [Pure]
-        public TransformationMatrix Multiply(TransformationMatrix matrix)
+        public TransformationMatrix Multiply(in TransformationMatrix matrix)
         {
             var a = (A * matrix.A) + (B * matrix.C) + (row1 * matrix.E);
             var b = (A * matrix.B) + (B * matrix.D) + (row1 * matrix.F);
@@ -404,7 +398,7 @@
             var r3 = (E * matrix.row1) + (F * matrix.row2) + (row3 * matrix.row3);
 
             return new TransformationMatrix(a, b, r1,
-                c, d, r2, 
+                c, d, r2,
                 e, f, r3);
         }
 
@@ -478,14 +472,23 @@
         }
 
         /// <inheritdoc />
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (!(obj is TransformationMatrix m))
-            {
-                return false;
-            }
+            return obj is TransformationMatrix other && Equals(other);
+        }
 
-            return Equals(this, m);
+        /// <inheritdoc />
+        public bool Equals(TransformationMatrix other)
+        {
+            return row1.Equals(other.row1) &&
+                   row2.Equals(other.row2) &&
+                   row3.Equals(other.row3) &&
+                   A.Equals(other.A) &&
+                   B.Equals(other.B) &&
+                   C.Equals(other.C) &&
+                   D.Equals(other.D) &&
+                   E.Equals(other.E) &&
+                   F.Equals(other.F);
         }
 
         /// <summary>
@@ -493,34 +496,23 @@
         /// </summary>
         public static bool Equals(TransformationMatrix a, TransformationMatrix b)
         {
-            for (var i = 0; i < Rows; i++)
-            {
-                for (var j = 0; j < Columns; j++)
-                {
-                    if (a[i, j] != b[i, j])
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            return true;
+            return a.Equals(b);
         }
 
         /// <inheritdoc />
         public override int GetHashCode()
         {
-            var hashCode = 472622392;
-            hashCode = hashCode * -1521134295 + row1.GetHashCode();
-            hashCode = hashCode * -1521134295 + row2.GetHashCode();
-            hashCode = hashCode * -1521134295 + row3.GetHashCode();
-            hashCode = hashCode * -1521134295 + A.GetHashCode();
-            hashCode = hashCode * -1521134295 + B.GetHashCode();
-            hashCode = hashCode * -1521134295 + C.GetHashCode();
-            hashCode = hashCode * -1521134295 + D.GetHashCode();
-            hashCode = hashCode * -1521134295 + E.GetHashCode();
-            hashCode = hashCode * -1521134295 + F.GetHashCode();
-            return hashCode;
+            var hashCode = new HashCode();
+            hashCode.Add(row1);
+            hashCode.Add(row2);
+            hashCode.Add(row3);
+            hashCode.Add(A);
+            hashCode.Add(B);
+            hashCode.Add(C);
+            hashCode.Add(D);
+            hashCode.Add(E);
+            hashCode.Add(F);
+            return hashCode.ToHashCode();
         }
 
         /// <inheritdoc />

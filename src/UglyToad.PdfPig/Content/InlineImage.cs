@@ -2,14 +2,13 @@
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
     using Filters;
     using Graphics.Colors;
     using Graphics.Core;
     using Tokens;
     using Images.Png;
-    using UglyToad.PdfPig.Util.JetBrains.Annotations;
 
     /// <inheritdoc />
     /// <summary>
@@ -17,10 +16,14 @@
     /// </summary>
     public class InlineImage : IPdfImage
     {
-        private readonly Lazy<IReadOnlyList<byte>> bytesFactory;
+        private readonly Lazy<Memory<byte>>? memoryFactory;
 
         /// <inheritdoc />
-        public PdfRectangle Bounds { get; }
+        public PdfRectangle BoundingBox { get; }
+
+        /// <inheritdoc />
+        [Obsolete("Use BoundingBox instead.")]
+        public PdfRectangle Bounds => BoundingBox;
 
         /// <inheritdoc />
         public int WidthInSamples { get; }
@@ -35,13 +38,12 @@
         public bool IsImageMask { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<decimal> Decode { get; }
+        public IReadOnlyList<double> Decode { get; }
 
         /// <inheritdoc />
         public bool IsInlineImage { get; } = true;
 
         /// <inheritdoc />
-        [NotNull]
         public DictionaryToken ImageDictionary { get; }
 
         /// <inheritdoc />
@@ -51,24 +53,37 @@
         public bool Interpolate { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<byte> RawBytes { get; }
+        public Memory<byte> RawMemory { get; }
+
+        /// <inheritdoc />
+        public Span<byte> RawBytes => RawMemory.Span;
 
         /// <inheritdoc />
         public ColorSpaceDetails ColorSpaceDetails { get; }
 
+        /// <inheritdoc />
+        public IPdfImage? MaskImage { get; }
+
         /// <summary>
         /// Create a new <see cref="InlineImage"/>.
         /// </summary>
-        internal InlineImage(PdfRectangle bounds, int widthInSamples, int heightInSamples, int bitsPerComponent, bool isImageMask,
+        internal InlineImage(PdfRectangle bounds,
+            int widthInSamples,
+            int heightInSamples,
+            int bitsPerComponent,
+            bool isImageMask,
             RenderingIntent renderingIntent,
             bool interpolate,
-            IReadOnlyList<decimal> decode,
-            IReadOnlyList<byte> bytes,
-            IReadOnlyList<IFilter> filters,
+            IReadOnlyList<double> decode,
+            Memory<byte> rawMemory,
+            ILookupFilterProvider filterProvider,
+            IReadOnlyList<NameToken> filterNames,
             DictionaryToken streamDictionary,
-            ColorSpaceDetails colorSpaceDetails)
+            ColorSpaceDetails colorSpaceDetails,
+            IPdfImage? softMaskImage)
         {
-            Bounds = bounds;
+            IsInlineImage = true;
+            BoundingBox = bounds;
             WidthInSamples = widthInSamples;
             HeightInSamples = heightInSamples;
             Decode = decode;
@@ -77,10 +92,11 @@
             RenderingIntent = renderingIntent;
             Interpolate = interpolate;
             ImageDictionary = streamDictionary;
-
-            RawBytes = bytes;
+            RawMemory = rawMemory;
             ColorSpaceDetails = colorSpaceDetails;
 
+            var filters = filterProvider.GetNamedFilters(filterNames);
+            
             var supportsFilters = true;
             foreach (var filter in filters)
             {
@@ -91,40 +107,42 @@
                 }
             }
 
-            bytesFactory = supportsFilters ? new Lazy<IReadOnlyList<byte>>(() =>
+            memoryFactory = supportsFilters ? new Lazy<Memory<byte>>(() =>
             {
-                var b = bytes.ToArray();
+                var b = RawMemory;
                 for (var i = 0; i < filters.Count; i++)
                 {
                     var filter = filters[i];
-                    b = filter.Decode(b, streamDictionary, i);
+                    b = filter.Decode(b, streamDictionary, filterProvider, i);
                 }
 
                 return b;
             }) : null;
+
+            MaskImage = softMaskImage;
         }
 
         /// <inheritdoc />
-        public bool TryGetBytes(out IReadOnlyList<byte> bytes)
+        public bool TryGetBytesAsMemory(out Memory<byte> bytes)
         {
             bytes = null;
-            if (bytesFactory == null)
+            if (memoryFactory is null)
             {
                 return false;
             }
 
-            bytes = bytesFactory.Value;
+            bytes = memoryFactory.Value;
 
             return true;
         }
 
         /// <inheritdoc />
-        public bool TryGetPng(out byte[] bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
+        public bool TryGetPng([NotNullWhen(true)] out byte[]? bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
 
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"Inline Image (w {Bounds.Width}, h {Bounds.Height})";
+            return $"Inline Image (w {BoundingBox.Width}, h {BoundingBox.Height})";
         }
     }
 }

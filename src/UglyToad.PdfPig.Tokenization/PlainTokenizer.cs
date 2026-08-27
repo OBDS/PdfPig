@@ -4,23 +4,35 @@
     using System.Text;
     using Tokens;
 
-    internal class PlainTokenizer : ITokenizer
+    internal sealed class PlainTokenizer : ITokenizer
     {
-        private readonly StringBuilder stringBuilder = new StringBuilder();
+        /// <summary>
+        /// <c>true</c> required to read malformed CMap streams which omit the whitespace mandated between tokens (see #1331).
+        /// It must NOT be enabled for general content stream parsing, where operators such as the Type 3 glyph operators
+        /// <c>d0</c> and <c>d1</c> legitimately contain digits.
+        /// </summary>
+        private readonly bool splitOnDigit;
 
-        public bool ReadsNextByte { get; } = true;
+        public bool ReadsNextByte => true;
+
+        public PlainTokenizer(bool splitOnDigit = false)
+        {
+            this.splitOnDigit = splitOnDigit;
+        }
 
         public bool TryTokenize(byte currentByte, IInputBytes inputBytes, out IToken token)
         {
-            token = null;
-
             if (ReadHelper.IsWhitespace(currentByte))
             {
+                token = null;
+
                 return false;
             }
 
-            var builder = stringBuilder;
+            using var builder = new ValueStringBuilder(stackalloc char[16]);
+
             builder.Append((char)currentByte);
+
             while (inputBytes.MoveNext())
             {
                 if (ReadHelper.IsWhitespace(inputBytes.CurrentByte))
@@ -28,35 +40,28 @@
                     break;
                 }
 
-                if (inputBytes.CurrentByte == '<' || inputBytes.CurrentByte == '['
-                    || inputBytes.CurrentByte == '/' || inputBytes.CurrentByte == ']'
-                    || inputBytes.CurrentByte == '>' || inputBytes.CurrentByte == '('
-                    || inputBytes.CurrentByte == ')')
+                if (inputBytes.CurrentByte is (byte)'<' or (byte)'[' or (byte)'/' or (byte)']' or (byte)'>' or (byte)'(' or (byte)')' or (byte)'%')
                 {
                     break;
                 }
 
-                builder.Append((char) inputBytes.CurrentByte);
+                if (splitOnDigit && inputBytes.CurrentByte is >= (byte)'0' and <= (byte)'9')
+                {
+                    // Malformed CMap, see #1331
+                    break;
+                }
+
+                builder.Append((char)inputBytes.CurrentByte);
             }
 
-            var text = builder.ToString();
-            builder.Clear();
+            var text = builder.AsSpan();
 
-            switch (text)
-            {
-                case "true":
-                    token = BooleanToken.True;
-                    break;
-                case "false":
-                    token = BooleanToken.False;
-                    break;
-                case "null":
-                    token = NullToken.Instance;
-                    break;
-                default:
-                    token = OperatorToken.Create(text);
-                    break;
-            }
+            token = text switch {
+                "true"  => BooleanToken.True,
+                "false" => BooleanToken.False,
+                "null"  => NullToken.Instance,
+                _       => OperatorToken.Create(text),
+            };
 
             return true;
         }

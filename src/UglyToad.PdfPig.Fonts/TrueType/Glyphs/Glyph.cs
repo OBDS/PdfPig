@@ -39,7 +39,7 @@
 
         public static IGlyphDescription Empty(PdfRectangle bounds)
         {
-            return new Glyph(true, new byte[0], new ushort[0], new GlyphPoint[0], bounds);
+            return new Glyph(true, [], [], [], bounds);
         }
 
         public IGlyphDescription DeepClone()
@@ -83,7 +83,7 @@
 
         private ushort[] MergeContourEndPoints(IGlyphDescription glyph)
         {
-            var destinationLastEndPoint = EndPointsOfContours[EndPointsOfContours.Length - 1] + 1;
+            var destinationLastEndPoint = (EndPointsOfContours.Length > 0 ? EndPointsOfContours[EndPointsOfContours.Length - 1] : 0) + 1;
 
             var endPoints = new ushort[EndPointsOfContours.Length + glyph.EndPointsOfContours.Length];
 
@@ -121,7 +121,7 @@
         #region Subpaths
         public bool TryGetGlyphPath(out IReadOnlyList<PdfSubpath> subpaths)
         {
-            subpaths = EmptyArray<PdfSubpath>.Instance;
+            subpaths = Array.Empty<PdfSubpath>();
             if (Points == null)
             {
                 return false;
@@ -182,16 +182,14 @@
                         }
                         else if (contour[j + 1].IsOnCurve)
                         {
-                            var pPrevious = contour[j - 1];
                             var pNext = contour[j + 1];
-                            subpath.BezierCurveTo(pPrevious.X, pPrevious.Y, pNow.X, pNow.Y, pNext.X, pNext.Y);
+                            subpath.BezierCurveTo(pNow.X, pNow.Y, pNext.X, pNext.Y);
                             ++j;
                         }
                         else
                         {
-                            var pPrevious = contour[j - 1];
                             var pmid = midValue(pNow, contour[j + 1]);
-                            subpath.BezierCurveTo(pPrevious.X, pPrevious.Y, pNow.X, pNow.Y, pmid.X, pmid.Y);
+                            subpath.BezierCurveTo(pNow.X, pNow.Y, pmid.X, pmid.Y);
                         }
                     }
                     subpath.CloseSubpath();

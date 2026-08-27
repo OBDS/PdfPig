@@ -2,6 +2,8 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
+    using System.Linq;
     using Core;
     using Geometry;
     using Tokens;
@@ -11,12 +13,13 @@
     /// Type 0 CID fonts contain glyph descriptions based on the
     /// Adobe Type 1 font format.
     /// </summary>
-    internal class Type0CidFont : ICidFont
+    internal sealed class Type0CidFont : ICidFont
     {
         private readonly ICidFontProgram fontProgram;
         private readonly VerticalWritingMetrics verticalWritingMetrics;
-        private readonly double? defaultWidth;
+        private readonly double defaultWidth;
         private readonly double scale;
+        private readonly CharacterIdentifierToGlyphIndexMap cidToGid;
 
         public NameToken Type { get; }
 
@@ -26,8 +29,8 @@
 
         public CharacterIdentifierSystemInfo SystemInfo { get; }
 
-        public FontDetails Details => fontProgram?.Details ?? Descriptor?.ToDetails(BaseFont?.Data) 
-                                      ?? FontDetails.GetDefault(BaseFont?.Data);
+        public FontDetails Details => fontProgram?.Details ?? Descriptor?.ToDetails(BaseFont?.Data)
+            ?? FontDetails.GetDefault(BaseFont?.Data);
 
         public TransformationMatrix FontMatrix { get; }
 
@@ -37,16 +40,22 @@
 
         public IReadOnlyDictionary<int, double> Widths { get; }
 
-        public Type0CidFont(ICidFontProgram fontProgram, NameToken type, NameToken subType, NameToken baseFont,
+        public Type0CidFont(
+            ICidFontProgram fontProgram,
+            NameToken type,
+            NameToken subType,
+            NameToken baseFont,
             CharacterIdentifierSystemInfo systemInfo,
-            FontDescriptor descriptor, 
-            VerticalWritingMetrics verticalWritingMetrics, 
+            FontDescriptor descriptor,
+            VerticalWritingMetrics verticalWritingMetrics,
             IReadOnlyDictionary<int, double> widths,
-            double? defaultWidth)
+            double defaultWidth,
+            CharacterIdentifierToGlyphIndexMap cidToGid)
         {
             this.fontProgram = fontProgram;
             this.verticalWritingMetrics = verticalWritingMetrics;
             this.defaultWidth = defaultWidth;
+            this.cidToGid = cidToGid;
 
             scale = 1 / (double)(fontProgram?.GetFontMatrixMultiplier() ?? 1000);
 
@@ -76,17 +85,7 @@
                 return width;
             }
 
-            if (defaultWidth.HasValue)
-            {
-                return defaultWidth.Value;
-            }
-            
-            if (Descriptor == null)
-            {
-                return 1000;
-            }
-
-            return (double)Descriptor.MissingWidth;
+            return defaultWidth;
         }
 
         public PdfRectangle GetBoundingBox(int characterIdentifier)
@@ -97,12 +96,12 @@
                 throw new ArgumentException($"The provided character identifier was negative: {characterIdentifier}.");
             }
 
-            if (fontProgram == null)
+            if (fontProgram is null)
             {
                 return Descriptor?.BoundingBox ?? new PdfRectangle(0, 0, 1000, 1.0 / scale);
             }
 
-            if (fontProgram.TryGetBoundingBox(characterIdentifier, out var boundingBox))
+            if (fontProgram.TryGetBoundingBox(characterIdentifier, cidToGid.GetGlyphIndex, out var boundingBox))
             {
                 return boundingBox;
             }
@@ -112,12 +111,7 @@
                 return new PdfRectangle(0, 0, width, 1.0 / scale);
             }
 
-            if (defaultWidth.HasValue)
-            {
-                return new PdfRectangle(0, 0, defaultWidth.Value, 1.0 / scale);
-            }
-
-            return new PdfRectangle(0, 0, 1000, 1.0 / scale);
+            return new PdfRectangle(0, 0, defaultWidth, 1.0 / scale);
         }
 
         public PdfVector GetPositionVector(int characterIdentifier)
@@ -132,21 +126,55 @@
             return verticalWritingMetrics.GetDisplacementVector(characterIdentifier);
         }
 
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public TransformationMatrix GetFontMatrix(int characterIdentifier)
         {
-            path = null;
-            if (fontProgram == null)
+            if (fontProgram is null)
             {
-                return false;
+                return FontMatrix;
             }
 
-            return fontProgram.TryGetPath(characterCode, out path);
+            return fontProgram.TryGetFontMatrix(characterIdentifier, out var m) ? m.Value : FontMatrix;
         }
 
-        public bool TryGetPath(int characterCode, Func<int, int?> characterCodeToGlyphId, out IReadOnlyList<PdfSubpath> path)
+        public double GetDescent()
+        {
+            if (fontProgram is null)
+            {
+                return Descriptor.Descent;
+            }
+
+            double? descent = fontProgram.GetDescent();
+            if (descent.HasValue)
+            {
+                return descent.Value;
+            }
+
+            return Descriptor.Descent;
+        }
+
+        public double GetAscent()
+        {
+            if (fontProgram is null)
+            {
+                return Descriptor.Ascent;
+            }
+
+            double? ascent = fontProgram.GetAscent();
+            if (ascent.HasValue)
+            {
+                return ascent.Value;
+            }
+
+            return Descriptor.Ascent;
+        }
+
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
+            => TryGetPath(characterCode, cidToGid.GetGlyphIndex, out path);
+
+        public bool TryGetPath(int characterCode, Func<int, int?> characterCodeToGlyphId, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
             path = null;
-            if (fontProgram == null)
+            if (fontProgram is null)
             {
                 return false;
             }
@@ -154,14 +182,24 @@
             return fontProgram.TryGetPath(characterCode, characterCodeToGlyphId, out path);
         }
 
-        public bool TryGetNormalisedPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
-        {
-            return TryGetPath(characterCode, out path);
-        }
+        public bool TryGetNormalisedPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
+            => TryGetNormalisedPath(characterCode, cidToGid.GetGlyphIndex, out path);
 
-        public bool TryGetNormalisedPath(int characterCode, Func<int, int?> characterCodeToGlyphId, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetNormalisedPath(int characterCode, Func<int, int?> characterCodeToGlyphId, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
-            return TryGetPath(characterCode, characterCodeToGlyphId, out path);
+            path = null;
+            if (fontProgram is null)
+            {
+                return false;
+            }
+
+            if (fontProgram.TryGetPath(characterCode, characterCodeToGlyphId, out path))
+            {
+                path = GetFontMatrix(characterCode).Transform(path).ToArray();
+                return true;
+            }
+
+            return false;
         }
     }
 }

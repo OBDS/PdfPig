@@ -17,7 +17,7 @@
             (double Xwd, double Ywd, double Zwd) destinationReferenceWhite,
             Method method = Method.Bradford)
         {
-            var coneReponseDomain = GetConeResponseDomain(method);
+            var coneReponseDomain = GetConeResponseDomain(method)!;
             var inverseConeResponseDomain = coneReponseDomain.Inverse();
             var (ρS, γS, βS) = coneReponseDomain.Multiply(sourceReferenceWhite);
 

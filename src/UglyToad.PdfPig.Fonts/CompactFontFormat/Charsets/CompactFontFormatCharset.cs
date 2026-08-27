@@ -10,13 +10,8 @@
 
         public bool IsCidCharset { get; } = false;
 
-        protected CompactFontFormatCharset(IReadOnlyList<(int glyphId, int stringId, string name)> data)
+        protected CompactFontFormatCharset(ReadOnlySpan<(int glyphId, int stringId, string name)> data)
         {
-            if (data == null)
-            {
-                throw new ArgumentNullException(nameof(data));
-            }
-
             var dictionary = new Dictionary<int, (int stringId, string name)>
             {
                 {0, (0, ".notdef")}
@@ -32,12 +27,12 @@
 
         public virtual string GetNameByGlyphId(int glyphId)
         {
-            return GlyphIdToStringIdAndName[glyphId].name;
+            return GlyphIdToStringIdAndName.TryGetValue(glyphId, out var strings) ? strings.name : null;
         }
 
         public virtual string GetNameByStringId(int stringId)
         {
-            return GlyphIdToStringIdAndName.Single(x => x.Value.stringId == stringId).Value.name;
+            return GlyphIdToStringIdAndName.FirstOrDefault(x => x.Value.stringId == stringId).Value.name;
         }
 
         public virtual int GetStringIdByGlyphId(int glyphId)

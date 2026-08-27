@@ -3,15 +3,13 @@
     using System;
     using System.Collections.Generic;
     using System.Text;
+    using System.Linq;
     using Annotations;
-    using Geometry;
     using Graphics.Operations;
     using Tokens;
     using Util;
-    using Util.JetBrains.Annotations;
     using Tokenization.Scanner;
     using Graphics;
-    using System.Linq;
 
     /// <summary>
     /// Contains the content and provides access to methods of a single page in the <see cref="PdfDocument"/>.
@@ -52,7 +50,7 @@
         /// <summary>
         /// The set of <see cref="Letter"/>s drawn by the PDF content.
         /// </summary>
-        public IReadOnlyList<Letter> Letters => Content?.Letters ?? new Letter[0];
+        public IReadOnlyList<Letter> Letters => Content.Letters;
 
         /// <summary>
         /// The full text of all characters on the page in the order they are presented in the PDF content.
@@ -85,18 +83,29 @@
         public IReadOnlyList<IGraphicsStateOperation> Operations => Content.GraphicsStateOperations;
 
         /// <summary>
+        /// The set of <see cref="PdfPath"/>s drawn by the PDF content.
+        /// </summary>
+        public IReadOnlyList<PdfPath> Paths => Content?.Paths ?? Array.Empty<PdfPath>();
+
+        /// <summary>
         /// Access to members whose future locations within the API will change without warning.
         /// </summary>
-        [NotNull]
+        [Obsolete("Use methods and properties directly at Page level.")]
         public Experimental ExperimentalAccess { get; }
 
-        internal Page(int number, DictionaryToken dictionary, MediaBox mediaBox, CropBox cropBox, PageRotationDegrees rotation, PageContent content,
+        internal Page(int number, DictionaryToken dictionary, MediaBox mediaBox, CropBox cropBox, PageRotationDegrees rotation,
+            PageContent content,
             AnnotationProvider annotationProvider,
             IPdfTokenScanner pdfScanner)
         {
             if (number <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(number), "Page number cannot be 0 or negative.");
+            }
+
+            if (content is null)
+            {
+                throw new ArgumentNullException(nameof(content));
             }
 
             Dictionary = dictionary ?? throw new ArgumentNullException(nameof(dictionary));
@@ -108,25 +117,46 @@
             Content = content;
             textLazy = new Lazy<string>(() => GetText(Content));
 
-            // Special case where cropbox is outside mediabox: use cropbox instead of intersection
-            var viewBox = mediaBox.Bounds.Intersect(cropBox.Bounds) ?? cropBox.Bounds;
+            // The crop box has already been clipped to the media box (ISO 32000-2:2020, 14.11.2).
+            var visibleBounds = cropBox.GetVisibleBounds(rotation);
+            Width = visibleBounds.Width;
+            Height = visibleBounds.Height;
 
-            Width = viewBox.Width;
-            Height = viewBox.Height;
-            Size = viewBox.GetPageSize();
+            Size = cropBox.Bounds.GetPageSize();
 
-            ExperimentalAccess = new Experimental(this, annotationProvider);
+            ExperimentalAccess = new Experimental(this);
             this.annotationProvider = annotationProvider;
             this.pdfScanner = pdfScanner ?? throw new ArgumentNullException(nameof(pdfScanner));
         }
 
         private static string GetText(PageContent content)
         {
-            if (content?.Letters == null)
+            if (content?.Letters is null)
             {
                 return string.Empty;
             }
 
+#if NET
+            int length = 0;
+
+            for (var i = 0; i < content.Letters.Count; i++)
+            {
+                length += content.Letters[i].Value.Length;
+            }
+
+            return string.Create(length, content, static (buffer, content) => {
+                int position = 0;
+
+                for (var i = 0; i < content.Letters.Count; i++)
+                {
+                    var value = content.Letters[i].Value;
+
+                    value.AsSpan().CopyTo(buffer[position..]);
+
+                    position += value.Length;
+                }
+            });
+#else
             var builder = new StringBuilder();
             for (var i = 0; i < content.Letters.Count; i++)
             {
@@ -134,6 +164,7 @@
             }
 
             return builder.ToString();
+#endif
         }
 
         /// <summary>
@@ -172,71 +203,91 @@
         public IReadOnlyList<MarkedContentElement> GetMarkedContents() => Content.GetMarkedContents();
 
         /// <summary>
+        /// Get the annotation objects from the page.
+        /// </summary>
+        /// <returns>The lazily evaluated set of annotations on this page.</returns>
+        public IEnumerable<Annotation> GetAnnotations()
+        {
+            return annotationProvider.GetAnnotations();
+        }
+
+        /// <summary>
+        /// Gets any optional content on the page.
+        /// <para>Does not handle XObjects and annotations for the time being.</para>
+        /// </summary>
+        public IReadOnlyDictionary<string, IReadOnlyList<OptionalContentGroupElement>> GetOptionalContents()
+        {
+            List<OptionalContentGroupElement> mcesOptional = new List<OptionalContentGroupElement>();
+
+            // 4.10.2
+            // Optional content in content stream
+            GetOptionalContentsRecursively(Content?.GetMarkedContents(), ref mcesOptional);
+
+            // Optional content in XObjects and annotations
+            // TO DO
+            //var annots = GetAnnotations().ToList();
+
+            return mcesOptional.GroupBy(oc => oc.Name).ToDictionary(g => g.Key!, g => (IReadOnlyList<OptionalContentGroupElement>)g.ToList());
+        }
+
+        private void GetOptionalContentsRecursively(IReadOnlyList<MarkedContentElement>? markedContentElements, ref List<OptionalContentGroupElement> mcesOptional)
+        {
+            if (markedContentElements is null || markedContentElements.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var mce in markedContentElements)
+            {
+                if (mce.Tag == "OC")
+                {
+                    mcesOptional.Add(new OptionalContentGroupElement(mce, pdfScanner));
+                    // we don't recurse
+                }
+                else if (mce.Children?.Count > 0)
+                {
+                    GetOptionalContentsRecursively(mce.Children, ref mcesOptional);
+                }
+            }
+        }
+
+        /// <summary>
         /// Provides access to useful members which will change in future releases.
         /// </summary>
+        [Obsolete("Use methods and properties directly at Page level.")]
         public class Experimental
         {
             private readonly Page page;
-            private readonly AnnotationProvider annotationProvider;
 
             /// <summary>
             /// The set of <see cref="PdfPath"/>s drawn by the PDF content.
             /// </summary>
-            public IReadOnlyList<PdfPath> Paths => page.Content?.Paths ?? new List<PdfPath>();
+            [Obsolete("Use Page.Paths instead.")]
+            public IReadOnlyList<PdfPath> Paths => page.Paths;
 
-            internal Experimental(Page page, AnnotationProvider annotationProvider)
+            internal Experimental(Page page)
             {
                 this.page = page;
-                this.annotationProvider = annotationProvider;
             }
 
             /// <summary>
             /// Get the annotation objects from the page.
             /// </summary>
             /// <returns>The lazily evaluated set of annotations on this page.</returns>
+            [Obsolete("Use Page.GetAnnotations() instead.")]
             public IEnumerable<Annotation> GetAnnotations()
             {
-                return annotationProvider.GetAnnotations();
+                return page.GetAnnotations();
             }
 
             /// <summary>
             /// Gets any optional content on the page.
             /// <para>Does not handle XObjects and annotations for the time being.</para>
             /// </summary>
+            [Obsolete("Use Page.GetOptionalContents() instead.")]
             public IReadOnlyDictionary<string, IReadOnlyList<OptionalContentGroupElement>> GetOptionalContents()
             {
-                List<OptionalContentGroupElement> mcesOptional = new List<OptionalContentGroupElement>();
-
-                // 4.10.2
-                // Optional content in content stream
-                GetOptionalContentsRecursively(page.Content?.GetMarkedContents(), ref mcesOptional);
-
-                // Optional content in XObjects and annotations
-                // TO DO
-                //var annots = GetAnnotations().ToList();
-
-                return mcesOptional.GroupBy(oc => oc.Name).ToDictionary(g => g.Key, g => g.ToList() as IReadOnlyList<OptionalContentGroupElement>);
-            }
-
-            private void GetOptionalContentsRecursively(IReadOnlyList<MarkedContentElement> markedContentElements, ref List<OptionalContentGroupElement> mcesOptional)
-            {
-                if (markedContentElements.Count == 0)
-                {
-                    return;
-                }
-
-                foreach (var mce in markedContentElements)
-                {
-                    if (mce.Tag == "OC")
-                    {
-                        mcesOptional.Add(new OptionalContentGroupElement(mce, page.pdfScanner));
-                        // we don't recurse
-                    }
-                    else if (mce.Children?.Count > 0)
-                    {
-                        GetOptionalContentsRecursively(mce.Children, ref mcesOptional);
-                    }
-                }
+                return page.GetOptionalContents();
             }
         }
     }

@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net451;net452;net46;net461;net462;net47;net6.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;netstandard2.1;net462;net471;net6.0;net8.0;net9.0</TargetFrameworks>
     <PackageId>PdfPig</PackageId>
-    <DebugType>full</DebugType>
+    <DebugType>portable</DebugType>
     <Authors>UglyToad</Authors>
     <Title>PdfPig</Title>
     <Description>Reads text content from PDF documents and supports document creation. Apache 2.0 licensed.</Description>
@@ -11,9 +11,9 @@
     <PackageTags>PDF;Reader;Document;Adobe;PDFBox;PdfPig;pdf-extract;pdf-to-text;pdf;file;text;C#;dotnet;.NET</PackageTags>
     <RepositoryUrl>https://github.com/UglyToad/PdfPig</RepositoryUrl>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Version>0.1.9-alpha001</Version>
-    <AssemblyVersion>0.1.8.0</AssemblyVersion>
-    <FileVersion>0.1.8.0</FileVersion>
+    <Version>0.1.17</Version>
+    <AssemblyVersion>0.1.17.0</AssemblyVersion>
+    <FileVersion>0.1.17.0</FileVersion>
     <PackageIconUrl>https://raw.githubusercontent.com/UglyToad/PdfPig/master/documentation/pdfpig.png</PackageIconUrl>
     <PackageIcon>pdfpig.png</PackageIcon>
     <Product>PdfPig</Product>
@@ -28,8 +28,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsAsErrors />
   </PropertyGroup>
-  <ItemGroup Condition="'$(TargetFramework)'=='net451' OR '$(TargetFramework)'=='net452' OR '$(TargetFramework)'=='net46' OR '$(TargetFramework)'=='net461' OR '$(TargetFramework)'=='net462' OR '$(TargetFramework)'=='net47'">
+  <ItemGroup Condition="'$(TargetFramework)'=='net462'">
     <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='netstandard2.0' or '$(TargetFramework)'=='net462' or '$(TargetFramework)'=='net471'">
+    <PackageReference Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
+    <PackageReference Include="System.Memory" Version="4.6.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\UglyToad.PdfPig.Core\UglyToad.PdfPig.Core.csproj" PrivateAssets="all" />

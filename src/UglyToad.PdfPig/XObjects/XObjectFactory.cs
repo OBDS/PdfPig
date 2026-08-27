@@ -1,7 +1,6 @@
 ﻿namespace UglyToad.PdfPig.XObjects
 {
     using System;
-    using System.Collections.Generic;
     using System.Linq;
     using Content;
     using Core;
@@ -9,17 +8,44 @@
     using Graphics;
     using Graphics.Colors;
     using Graphics.Core;
+    using Images;
+    using Parser.Parts;
     using Tokenization.Scanner;
     using Tokens;
     using Util;
 
-    internal static class XObjectFactory
+    /// <summary>
+    /// External Object (XObject) factory.
+    /// </summary>
+    public static class XObjectFactory
     {
-        public static XObjectImage ReadImage(XObjectContentRecord xObject, IPdfTokenScanner pdfScanner,
+        private static DictionaryToken Resolve(DictionaryToken streamDictionary, IPdfTokenScanner pdfScanner)
+        {
+            if (streamDictionary.TryGet(NameToken.ColorSpace, out var rawColorSpace)
+                && DirectObjectFinder.TryGet(rawColorSpace, pdfScanner, out ArrayToken? rawColorSpaceArray)
+                && rawColorSpaceArray.Length > 0
+                && rawColorSpaceArray.Data[0] is NameToken)
+            {
+                // Avoid resolving the ColorSpace here (this can be a profile stream of an /ICCBased
+                // or the lookup table of an /Indexed). ColorSpaceDetailsParser resolves the elements it
+                // needs through the scanner anyway.
+                return streamDictionary.Without(NameToken.ColorSpace)
+                    .Resolve(pdfScanner)
+                    .With(NameToken.ColorSpace, rawColorSpaceArray);
+            }
+            
+            return streamDictionary.Resolve(pdfScanner);
+        }
+        
+        /// <summary>
+        /// Read the XObject image.
+        /// </summary>
+        public static XObjectImage ReadImage(XObjectContentRecord xObject,
+            IPdfTokenScanner pdfScanner,
             ILookupFilterProvider filterProvider,
             IResourceStore resourceStore)
         {
-            if (xObject == null)
+            if (xObject is null)
             {
                 throw new ArgumentNullException(nameof(xObject));
             }
@@ -29,33 +55,95 @@
                 throw new InvalidOperationException($"Cannot create an image from an XObject with type: {xObject.Type}.");
             }
 
-            var dictionary = xObject.Stream.StreamDictionary;
-
+            var dictionary = Resolve(xObject.Stream.StreamDictionary, pdfScanner);
+            
             var bounds = xObject.AppliedTransformation.Transform(new PdfRectangle(new PdfPoint(0, 0), new PdfPoint(1, 1)));
 
-            var width = dictionary.Get<NumericToken>(NameToken.Width, pdfScanner).Int;
-            var height = dictionary.Get<NumericToken>(NameToken.Height, pdfScanner).Int;
+            var width = dictionary.GetInt(NameToken.Width);
+            var height = dictionary.GetInt(NameToken.Height);
 
-            var isImageMask = dictionary.TryGet(NameToken.ImageMask, pdfScanner, out BooleanToken isMaskToken)
-                         && isMaskToken.Data;
+            var isImageMask = dictionary.TryGet(NameToken.ImageMask, out BooleanToken isMaskToken) && isMaskToken.Data;
 
-            var isJpxDecode = dictionary.TryGet(NameToken.Filter, out var token)
-                && token is NameToken filterName
-                && filterName.Equals(NameToken.JpxDecode);
-
-            int bitsPerComponent = 0;
-            if (!isImageMask && !isJpxDecode)
+            XObjectImage? softMaskImage = null;
+            if (dictionary.TryGet(NameToken.Smask, pdfScanner, out StreamToken? sMaskToken))
             {
-                if (!dictionary.TryGet(NameToken.BitsPerComponent, pdfScanner, out NumericToken bitsPerComponentToken))
+                if (!sMaskToken.StreamDictionary.TryGet(NameToken.Subtype, out NameToken softMaskSubType) || !softMaskSubType.Equals(NameToken.Image))
                 {
-                    throw new PdfDocumentFormatException($"No bits per component defined for image: {dictionary}.");
+                    throw new Exception("The SMask dictionary does not contain a 'Subtype' entry, or its value is not 'Image'.");
                 }
 
-                bitsPerComponent = bitsPerComponentToken.Int;
+                if (!sMaskToken.StreamDictionary.TryGet(NameToken.ColorSpace, out NameToken softMaskColorSpace) || !softMaskColorSpace.Equals(NameToken.Devicegray))
+                {
+                    throw new Exception("The SMask dictionary does not contain a 'ColorSpace' entry, or its value is not 'Devicegray'.");
+                }
+
+                if (sMaskToken.StreamDictionary.ContainsKey(NameToken.Mask) || sMaskToken.StreamDictionary.ContainsKey(NameToken.Smask))
+                {
+                    throw new Exception("The SMask dictionary contains a 'Mask' or 'Smask' entry.");
+                }
+
+                XObjectContentRecord softMaskImageRecord = new XObjectContentRecord(XObjectType.Image,
+                    sMaskToken,
+                    TransformationMatrix.Identity,
+                    xObject.DefaultRenderingIntent, // Ignored
+                    DeviceGrayColorSpaceDetails.Instance);
+
+                softMaskImage = ReadImage(softMaskImageRecord, pdfScanner, filterProvider, resourceStore);
             }
-            else if (isImageMask)
+            else if (dictionary.TryGet(NameToken.Mask, out StreamToken maskStream))
+            {
+                /* As per Pdf Specifications:
+                 *  "The image dictionary shall not contain a ColorSpace entry because sample values represent masking properties (1 bit per sample) rather than colours."
+                 *
+                 * TODO - We assume here lenient parsing, but we should actually get the value from parsing options. See Issue #1054
+                 *
+                 * if (maskStream.StreamDictionary.ContainsKey(NameToken.ColorSpace))
+                 * {
+                 *      throw new Exception("The SMask dictionary contains a 'ColorSpace'.");
+                 * }
+                 */
+
+                // Stencil masking
+                XObjectContentRecord maskImageRecord = new XObjectContentRecord(XObjectType.Image,
+                    maskStream,
+                    TransformationMatrix.Identity,
+                    xObject.DefaultRenderingIntent,
+                    null);
+
+                softMaskImage = ReadImage(maskImageRecord, pdfScanner, filterProvider, resourceStore);
+            }
+
+            var isJpxDecode = dictionary.TryGet(NameToken.Filter, out NameToken filterName) && filterName.Equals(NameToken.JpxDecode);
+
+            int bitsPerComponent;
+            if (isImageMask)
             {
                 bitsPerComponent = 1;
+            }
+            else
+            {
+                if (isJpxDecode)
+                {
+                    // Optional for JPX
+                    if (dictionary.TryGet(NameToken.BitsPerComponent, out NumericToken? bitsPerComponentToken))
+                    {
+                        bitsPerComponent = bitsPerComponentToken.Int;
+                        System.Diagnostics.Debug.Assert(bitsPerComponent == Jpeg2000Helper.GetBitsPerComponent(xObject.Stream.Data.Span));
+                    }
+                    else
+                    {
+                        bitsPerComponent = Jpeg2000Helper.GetBitsPerComponent(xObject.Stream.Data.Span);
+                    }
+                }
+                else
+                {
+                    if (!dictionary.TryGet(NameToken.BitsPerComponent, out NumericToken? bitsPerComponentToken))
+                    {
+                        throw new PdfDocumentFormatException($"No bits per component defined for image: {dictionary}.");
+                    }
+
+                    bitsPerComponent = bitsPerComponentToken.Int;
+                }
             }
 
             var intent = xObject.DefaultRenderingIntent;
@@ -64,74 +152,55 @@
                 intent = renderingIntentToken.Data.ToRenderingIntent();
             }
 
-            var interpolate = dictionary.TryGet(NameToken.Interpolate, pdfScanner, out BooleanToken interpolateToken)
+            var interpolate = dictionary.TryGet(NameToken.Interpolate, out BooleanToken? interpolateToken)
                               && interpolateToken.Data;
 
-            DictionaryToken filterDictionary = xObject.Stream.StreamDictionary;
-            if (xObject.Stream.StreamDictionary.TryGet(NameToken.Filter, out var filterToken)
-                && filterToken is IndirectReferenceToken)
+            var supportsFilters = true;
+            var filters = filterProvider.GetFilters(dictionary, pdfScanner);
+            foreach (var filter in filters)
             {
-                if (filterDictionary.TryGet(NameToken.Filter, pdfScanner, out ArrayToken filterArray))
+                if (!filter.IsSupported)
                 {
-                    filterDictionary = filterDictionary.With(NameToken.Filter, filterArray);
-                }
-                else if (filterDictionary.TryGet(NameToken.Filter, pdfScanner, out NameToken filterNameToken))
-                {
-                    filterDictionary = filterDictionary.With(NameToken.Filter, filterNameToken);
-                }
-                else
-                {
-                    filterDictionary = null;
+                    supportsFilters = false;
+                    break;
                 }
             }
-
-            var supportsFilters = filterDictionary != null;
-            if (filterDictionary != null)
-            {
-                var filters = filterProvider.GetFilters(filterDictionary, pdfScanner);
-                foreach (var filter in filters)
-                {
-                    if (!filter.IsSupported)
-                    {
-                        supportsFilters = false;
-                        break;
-                    }
-                }
-            }
-
-            var decodeParams = dictionary.GetObjectOrDefault(NameToken.DecodeParms, NameToken.Dp);
-            if (decodeParams is IndirectReferenceToken refToken)
-            {
-                dictionary = dictionary.With(NameToken.DecodeParms, pdfScanner.Get(refToken.Data).Data);
-            }
-
-            var streamToken = new StreamToken(dictionary, xObject.Stream.Data);
-
-            var decodedBytes = supportsFilters ? new Lazy<IReadOnlyList<byte>>(() => streamToken.Decode(filterProvider, pdfScanner))
+            
+            var streamToken = new StreamToken(dictionary, xObject.Stream.Data); // Needed as Resolve(pdfScanner) was called on the dictionary
+            var decodedBytes = supportsFilters ? new Lazy<Memory<byte>>(() => streamToken.Decode(filterProvider, pdfScanner))
                 : null;
 
-            var decode = EmptyArray<decimal>.Instance;
-
-            if (dictionary.TryGet(NameToken.Decode, pdfScanner, out ArrayToken decodeArrayToken))
+            var decode = Array.Empty<double>();
+            // PDF 2.0, 7.4.9: for a JPXDecode image with no /ColorSpace entry the Decode array shall be
+            // ignored unless the image is an image mask.
+            bool ignoreDecode = isJpxDecode && !isImageMask && !dictionary.ContainsKey(NameToken.ColorSpace);
+            if (!ignoreDecode && dictionary.TryGet(NameToken.Decode, out ArrayToken decodeArrayToken))
             {
                 decode = decodeArrayToken.Data.OfType<NumericToken>()
-                    .Select(x => x.Data)
+                    .Select(x => x.Double)
                     .ToArray();
             }
 
-            ColorSpaceDetails details = null;
+            ColorSpaceDetails? details = null;
             if (!isImageMask)
             {
-                if (dictionary.TryGet(NameToken.ColorSpace, pdfScanner, out NameToken colorSpaceNameToken))
+                if (dictionary.TryGet(NameToken.ColorSpace, out NameToken? colorSpaceNameToken))
                 {
                     details = resourceStore.GetColorSpaceDetails(colorSpaceNameToken, dictionary);
                 }
-                else if (dictionary.TryGet(NameToken.ColorSpace, pdfScanner, out ArrayToken colorSpaceArrayToken)
+                else if (dictionary.TryGet(NameToken.ColorSpace, out ArrayToken? colorSpaceArrayToken)
                     && colorSpaceArrayToken.Length > 0 && colorSpaceArrayToken.Data[0] is NameToken firstColorSpaceName)
                 {
                     details = resourceStore.GetColorSpaceDetails(firstColorSpaceName, dictionary);
                 }
-                else if (!isJpxDecode)
+                else if (isJpxDecode)
+                {
+                    // A JPXDecode image without an explicit /ColorSpace entry takes its colour space
+                    // from the colour space information embedded in the JPEG2000 data (PDF 2.0, 7.4.9);
+                    // otherwise ColorSpaceDetails stays null and the image cannot be interpreted.
+                    details = Jpeg2000Helper.GetJpxColorSpaceDetails(xObject.Stream.Data);
+                }
+                else
                 {
                     details = xObject.DefaultColorSpace;
                 }
@@ -154,7 +223,8 @@
                 dictionary,
                 xObject.Stream.Data,
                 decodedBytes,
-                details);
+                details,
+                softMaskImage);
         }
     }
 }

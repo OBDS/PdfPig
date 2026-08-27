@@ -2,10 +2,12 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
+    using Fonts;
     using Fonts.CompactFontFormat;
 
-    internal class PdfCidCompactFontFormatFont : ICidFontProgram
+    internal sealed class PdfCidCompactFontFormatFont : ICidFontProgram
     {
         private readonly CompactFontFormatFontCollection fontCollection;
 
@@ -17,33 +19,40 @@
             Details = GetDetails(fontCollection?.FirstFont);
         }
 
-        private static FontDetails GetDetails(CompactFontFormatFont font)
+        private static FontDetails GetDetails(CompactFontFormatFont? font)
         {
-            if (font == null)
+            if (font is null)
             {
                 return FontDetails.GetDefault();
             }
 
-            FontDetails WithWeightValues(bool isbold, int weight) => new FontDetails(null, isbold, weight, font.ItalicAngle != 0);
+            FontDetails WithWeightValues(bool isBold, int weight) => new FontDetails(null, isBold, weight, font.ItalicAngle != 0);
 
-            switch (font.Weight?.ToLowerInvariant())
+            return (font.Weight?.ToLowerInvariant()) switch
             {
-                case "light":
-                    return WithWeightValues(false, 300);
-                case "semibold":
-                    return WithWeightValues(true, 600);
-                case "bold":
-                    return WithWeightValues(true, FontDetails.BoldWeight);
-                case "black":
-                    return WithWeightValues(true, 900);
-                default:
-                    return WithWeightValues(false, FontDetails.DefaultWeight);
-            }
+                "light"    => WithWeightValues(false, 300),
+                "semibold" => WithWeightValues(true, 600),
+                "bold"     => WithWeightValues(true, FontDetails.BoldWeight),
+                "black"    => WithWeightValues(true, 900),
+                _          => WithWeightValues(false, FontDetails.DefaultWeight)
+            };
         }
 
         public TransformationMatrix GetFontTransformationMatrix() => fontCollection.GetFirstTransformationMatrix();
 
         public PdfRectangle? GetCharacterBoundingBox(string characterName) => fontCollection.GetCharacterBoundingBox(characterName);
+
+        public double? GetDescent()
+        {
+            // BobLd: we don't support ascent / descent for cff for the moment
+            return null;
+        }
+
+        public double? GetAscent()
+        {
+            // BobLd: we don't support ascent / descent for cff for the moment
+            return null;
+        }
 
         public bool TryGetBoundingBox(int characterIdentifier, out PdfRectangle boundingBox)
         {
@@ -51,12 +60,12 @@
 
             var font = GetFont();
 
-            if (font.Encoding == null)
+            var characterName = GetCharacterName(characterIdentifier);
+
+            if (string.Equals(characterName, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
-
-            var characterName = GetCharacterName(characterIdentifier);
 
             boundingBox = font.GetCharacterBoundingBox(characterName) ?? new PdfRectangle(0, 0, 500, 0);
 
@@ -65,17 +74,34 @@
 
         public bool TryGetBoundingBox(int characterIdentifier, Func<int, int?> characterCodeToGlyphId, out PdfRectangle boundingBox)
         {
-            throw new NotImplementedException();
+            var font = GetFont();
+
+            int? glyphId = characterCodeToGlyphId.Invoke(characterIdentifier);
+
+            string name = glyphId.HasValue
+                ? GetCharacterName(glyphId.Value)
+                : GetCharacterName(characterIdentifier);
+
+            PdfRectangle? tempBbox = font.GetCharacterBoundingBox(name);
+            if (tempBbox.HasValue)
+            {
+                boundingBox = tempBbox.Value;
+                return true;
+            }
+
+            boundingBox = default;
+            return false;
         }
 
         public bool TryGetBoundingAdvancedWidth(int characterIdentifier, Func<int, int?> characterCodeToGlyphId, out double width)
         {
-            throw new NotImplementedException();
+            return TryGetBoundingAdvancedWidth(characterIdentifier, out width);
         }
 
         public bool TryGetBoundingAdvancedWidth(int characterIdentifier, out double width)
         {
-            throw new NotImplementedException();
+            width = double.NaN;
+            return false;
         }
 
         public int GetFontMatrixMultiplier()
@@ -83,16 +109,26 @@
             return 1000;
         }
 
+        public bool TryGetFontMatrix(int characterCode, [NotNullWhen(true)] out TransformationMatrix? matrix)
+        {
+            var font = GetFont();
+            var name = font.GetCharacterName(characterCode, true);
+            if (name is null)
+            {
+                matrix = null;
+                return false;
+            }
+            matrix = font.GetFontMatrix(name);
+            return matrix.HasValue;
+        }
+
         public string GetCharacterName(int characterCode)
         {
             var font = GetFont();
 
-            if (font.Encoding != null)
-            {
-                return font.Encoding.GetName(characterCode);
-            }
+            var name = font.GetCharacterName(characterCode, true);
 
-            return ".notdef";
+            return name ?? GlyphList.NotDefined;
         }
 
         private CompactFontFormatFont GetFont()
@@ -107,18 +143,18 @@
             return fontCollection.FirstFont;
         }
 
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
-            path = EmptyArray<PdfSubpath>.Instance;
+            path = null;
 
             var font = GetFont();
 
-            if (font.Encoding == null)
+            var characterName = GetCharacterName(characterCode);
+
+            if (string.Equals(characterName, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
-
-            var characterName = GetCharacterName(characterCode);
 
             if (font.TryGetPath(characterName, out path))
             {
@@ -130,7 +166,25 @@
 
         public bool TryGetPath(int characterCode, Func<int, int?> characterCodeToGlyphId, out IReadOnlyList<PdfSubpath> path)
         {
-            throw new NotImplementedException();
+            path = null;
+
+            int? glyphId = characterCodeToGlyphId.Invoke(characterCode);
+
+            string characterName = glyphId.HasValue
+                ? GetCharacterName(glyphId.Value)
+                : GetCharacterName(characterCode);
+
+            if (string.Equals(characterName, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (GetFont().TryGetPath(characterName, out path))
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }

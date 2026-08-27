@@ -3,8 +3,6 @@
     using PdfPig.Fonts.CompactFontFormat;
     using PdfPig.Fonts.CompactFontFormat.Charsets;
     using PdfPig.Fonts.CompactFontFormat.CharStrings;
-    using System;
-    using Xunit;
 
     public class Type2CharStringParserTests
     {
@@ -26,7 +24,7 @@
             var input = StringToByteArray(Tika2121LegacySerifBookLetterBHex);
 
             var result = Type2CharStringParser.Parse(
-                new[] { input },
+                [new ReadOnlyMemory<byte>(input)],
                 EmptySubroutinesSelector,
                 NameCharset.Instance);
 

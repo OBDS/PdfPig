@@ -1,24 +1,47 @@
 ﻿namespace UglyToad.PdfPig.Writer
 {
-    using Content;
-    using Core;
-    using Parser.Parts;
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Linq;
+    using Content;
+    using Core;
+    using Parser.Parts;
     using Tokenization.Scanner;
     using Tokens;
 
 	internal static class WriterUtil
     {
-        public static Dictionary<string, IToken> GetOrCreateDict(this Dictionary<NameToken, IToken> dict,  NameToken key)
+        public static Dictionary<string, IToken> GetOrCreateDict<T>(
+            this Dictionary<T, IToken> dict,
+            T key,
+            IPdfTokenScanner? sourceScanner = null) where T : notnull
         {
             if (dict.TryGetValue(key, out var item))
             {
-                if (!(item is DictionaryToken dt))
+                var chainCount = 0;
+                var itemChain = item;
+                while (itemChain is IndirectReferenceToken ir && chainCount < 100)
                 {
-                    throw new ApplicationException("Expected dictionary token, got " + item.GetType());
+                    if (sourceScanner == null)
+                    {
+                        break;
+                    }
+
+                    itemChain = sourceScanner.Get(ir.Data);
+
+                    chainCount++;
+
+                    if (itemChain is ObjectToken ot)
+                    {
+                        itemChain = ot.Data;
+                    }
+                }
+
+                if (itemChain is not DictionaryToken dt)
+                {
+                    throw new InvalidOperationException(
+                        $"While trying to copy token called {key} which should have been a dictionary token we found a token of type {item.GetType()}");
                 }
 
                 if (dt.Data is Dictionary<string, IToken> mutable)
@@ -37,30 +60,6 @@
             return created;
         }
 
-        public static Dictionary<string, IToken> GetOrCreateDict(this Dictionary<string, IToken> dict,  string key)
-        {
-            if (dict.TryGetValue(key, out var item))
-            {
-                if (!(item is DictionaryToken dt))
-                {
-                    throw new ApplicationException("Expected dictionary token, got " + item.GetType());
-                }
-
-                if (dt.Data is Dictionary<string, IToken> mutable)
-                {
-                    return mutable;
-                }
-
-                mutable = dt.Data.
-                    ToDictionary(x => x.Key, x => x.Value);
-                dict[key] = DictionaryToken.With(mutable);
-                return mutable;
-            }
-
-            var created = new Dictionary<string, IToken>();
-            dict[key] = DictionaryToken.With(created);
-            return created;
-        }
         /// <summary>
         /// The purpose of this method is to resolve indirect reference. That mean copy the reference's content to the new document's stream
         /// and replace the indirect reference with the correct/new one
@@ -72,13 +71,10 @@
         /// <param name="callstack">Call stack of indirect references</param>
         /// <returns>A reference of the token that was copied. With all the reference updated</returns>
         public static IToken CopyToken(IPdfStreamWriter writer, IToken tokenToCopy, IPdfTokenScanner tokenScanner,
-            IDictionary<IndirectReference, IndirectReferenceToken> referencesFromDocument, Dictionary<IndirectReference, IndirectReferenceToken> callstack=null)
+            IDictionary<IndirectReference, IndirectReferenceToken> referencesFromDocument, Dictionary<IndirectReference, IndirectReferenceToken?>? callstack = null)
         {
-            if (callstack == null)
-            {
-                callstack = new Dictionary<IndirectReference, IndirectReferenceToken>();
-            }
-
+            callstack ??= [];
+         
             // This token need to be deep copied, because they could contain reference. So we have to update them.
             switch (tokenToCopy)
             {
@@ -111,7 +107,7 @@
                             return newReferenceToken;
                         }
 
-                        if (callstack.ContainsKey(referenceToken.Data) && callstack[referenceToken.Data] == null)
+                        if (callstack.ContainsKey(referenceToken.Data) && callstack[referenceToken.Data] is null)
                         {
                             newReferenceToken = writer.ReserveObjectNumber();
                             callstack[referenceToken.Data] = newReferenceToken;
@@ -127,9 +123,9 @@
                         // referencesFromDocument.Add(referenceToken.Data, newReferenceToken);
                         // 
                         var tokenObject = DirectObjectFinder.Get<IToken>(referenceToken.Data, tokenScanner);
-                        if (tokenObject is null) //NullToken allowed
+                        if (tokenObject is null) // NullToken allowed
                         {
-                            return null;
+                            return null!;
                         }
 
                         Debug.Assert(!(tokenObject is IndirectReferenceToken));
@@ -137,7 +133,7 @@
 
                         if (callstack[referenceToken.Data] != null)
                         {
-                            return writer.WriteToken(result, callstack[referenceToken.Data]);
+                            return writer.WriteToken(result, callstack[referenceToken.Data]!);
                         }
 
                         newReferenceToken = writer.WriteToken(result);
@@ -164,9 +160,9 @@
             return tokenToCopy;
         }
 
-        internal static IEnumerable<(DictionaryToken, IReadOnlyList<DictionaryToken>)> WalkTree(PageTreeNode node, List<DictionaryToken> parents=null)
+        internal static IEnumerable<(DictionaryToken, IReadOnlyList<DictionaryToken>)> WalkTree(PageTreeNode node, List<DictionaryToken>? parents = null)
         {
-            if (parents == null)
+            if (parents is null)
             {
                 parents = new List<DictionaryToken>();
             }
@@ -179,7 +175,7 @@
 
             parents = parents.ToList();
             parents.Add(node.NodeDictionary);
-            foreach (var child in node.Children)
+            foreach (var child in node.Children!)
             {
                 foreach (var item in WalkTree(child, parents))
                 {

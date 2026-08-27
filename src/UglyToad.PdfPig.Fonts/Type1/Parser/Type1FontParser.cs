@@ -18,39 +18,42 @@
 
         private const int PfbFileIndicator = 0x80;
 
+        private static readonly char[] Separators = [' '];
+
         private static readonly Type1EncryptedPortionParser EncryptedPortionParser = new Type1EncryptedPortionParser();
-        
+
         /// <summary>
         /// Parses an embedded Adobe Type 1 font file.
         /// </summary>
         /// <param name="inputBytes">The bytes of the font program.</param>
         /// <param name="length1">The length in bytes of the clear text portion of the font program.</param>
         /// <param name="length2">The length in bytes of the encrypted portion of the font program.</param>
+        /// <param name="stackDepthGuard"></param>
         /// <returns>The parsed type 1 font.</returns>
-        public static Type1Font Parse(IInputBytes inputBytes, int length1, int length2)
+        public static Type1Font Parse(IInputBytes inputBytes, int length1, int length2, StackDepthGuard stackDepthGuard)
         {
             // Sometimes the entire PFB file including the header bytes can be included which prevents parsing in the normal way.
             var isEntirePfbFile = inputBytes.Peek() == PfbFileIndicator;
 
-            IReadOnlyList<byte> eexecPortion = new byte[0];
+            ReadOnlySpan<byte> eexecPortion = [];
 
             if (isEntirePfbFile)
             {
                 var (ascii, binary) = ReadPfbHeader(inputBytes);
 
                 eexecPortion = binary;
-                inputBytes = new ByteArrayInputBytes(ascii);
+                inputBytes = new MemoryInputBytes(ascii);
             }
 
-            var scanner = new CoreTokenScanner(inputBytes, false);
+            var scanner = new CoreTokenScanner(inputBytes, false, stackDepthGuard);
 
             if (!scanner.TryReadToken(out CommentToken comment) || !comment.Data.StartsWith("!"))
             {
                 throw new InvalidFontFormatException("The Type1 program did not start with '%!'.");
             }
-
+            
             string name;
-            var parts = comment.Data.Split(new[] { " " }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = comment.Data.Split(Separators, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 3)
             {
                 name = parts[1];
@@ -60,11 +63,9 @@
                 name = "Unknown";
             }
 
-            var comments = new List<string>();
-
-            while (scanner.MoveNext() && scanner.CurrentToken is CommentToken commentToken)
+            while (scanner.MoveNext() && scanner.CurrentToken is CommentToken)
             {
-                comments.Add(commentToken.Data);
+                // We ignore comments
             }
 
             var dictionaries = new List<DictionaryToken>();
@@ -77,7 +78,7 @@
             
             try
             {
-                var tempEexecPortion = new List<byte>();
+                using var tempEexecPortion = new ArrayPoolBufferWriter<byte>();
                 var tokenSet = new PreviousTokenSet();
                 tokenSet.Add(scanner.CurrentToken);
                 while (scanner.MoveNext())
@@ -100,7 +101,7 @@
                                     {
                                         for (int i = 0; i < offset; i++)
                                         {
-                                            tempEexecPortion.Add((byte)ClearToMark[i]);
+                                            tempEexecPortion.Write((byte)ClearToMark[i]);
                                         }
                                     }
 
@@ -117,7 +118,7 @@
                                     continue;
                                 }
 
-                                tempEexecPortion.Add(inputBytes.CurrentByte);
+                                tempEexecPortion.Write(inputBytes.CurrentByte);
                             }
                         }
                         else
@@ -131,7 +132,7 @@
 
                 if (!isEntirePfbFile)
                 {
-                    eexecPortion = tempEexecPortion;
+                    eexecPortion = tempEexecPortion.WrittenSpan.ToArray();
                 }
             }
             finally
@@ -441,7 +442,7 @@
             return null;
         }
 
-        private class PreviousTokenSet
+        private sealed class PreviousTokenSet
         {
             private readonly IToken[] tokens = new IToken[3];
 

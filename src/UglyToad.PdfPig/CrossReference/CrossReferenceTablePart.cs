@@ -2,6 +2,8 @@
 {
     using System.Collections.Generic;
     using Core;
+    using Parser.FileStructure;
+    using System.Linq;
     using Tokens;
 
     /// <summary>
@@ -15,21 +17,21 @@
     ///     ggggg is a 5-digit generation number
     ///     n is a literal keyword identifying this as an in-use entry
     ///     eol is a 2-character end-of-line sequence
-    /// 
-    /// 
+    ///
+    ///
     /// The byte offset is a 10-digit number, padded with leading zeros if necessary,
     /// giving the number of bytes from the beginning of the file to the beginning of the
-    /// object. 
+    /// object.
     /// </remarks>
-    internal class CrossReferenceTablePart
+    public class CrossReferenceTablePart
     {
-        public IReadOnlyDictionary<IndirectReference, long> ObjectOffsets { get; }
+        public IReadOnlyDictionary<IndirectReference, XrefLocation> ObjectOffsets { get; }
 
-        public long Offset { get; private set; }
+        public long Offset { get; }
 
-        public long Previous { get; }
+        public long? Previous { get; }
 
-        public DictionaryToken Dictionary { get; private set; }
+        public DictionaryToken Dictionary { get; }
 
         public CrossReferenceType Type { get; }
 
@@ -39,8 +41,9 @@
         public long? TiedToXrefAtOffset { get; }
 
         public CrossReferenceTablePart(
-            IReadOnlyDictionary<IndirectReference, long> objectOffsets,
-            long offset, long previous,
+            IReadOnlyDictionary<IndirectReference, XrefLocation> objectOffsets,
+            long offset, 
+            long? previous,
             DictionaryToken dictionary,
             CrossReferenceType type,
             long? tiedToXrefAtOffset)
@@ -53,20 +56,28 @@
             TiedToXrefAtOffset = tiedToXrefAtOffset;
         }
 
-        public void FixOffset(long offset)
+        internal static CrossReferenceTablePart FromXrefSection(IXrefSection xrefSection)
         {
-            Offset = offset;
-            Dictionary = Dictionary.With(NameToken.Prev, new NumericToken(offset));
-        }
+            long? tiedToXrefAtOffset = null;
 
-        public long GetPreviousOffset()
-        {
-            if (Dictionary.TryGet(NameToken.Prev, out var token) && token is NumericToken numeric)
+            if (xrefSection.Dictionary is not null)
             {
-                return numeric.Long;
+                tiedToXrefAtOffset = xrefSection.Dictionary.TryGet<NumericToken>(NameToken.XrefStm, out var xrefStm)
+                    ? xrefStm.Long
+                    : tiedToXrefAtOffset;
             }
 
-            return -1;
+            var partType = xrefSection is XrefStream
+                ? CrossReferenceType.Stream
+                : CrossReferenceType.Table;
+            
+            return new CrossReferenceTablePart(
+                xrefSection.ObjectOffsets,
+                xrefSection.Offset,
+                xrefSection.GetPrevious(),
+                xrefSection.Dictionary ?? DictionaryToken.Empty,
+                partType,
+                tiedToXrefAtOffset);
         }
     }
 }

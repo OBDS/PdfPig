@@ -4,6 +4,7 @@
     using Core;
     using DocumentLayoutAnalysis;
     using System;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
     using UglyToad.PdfPig.Graphics;
@@ -118,6 +119,9 @@
         /// Get the hOCR (HTML) string of the page layout. Excludes PdfPaths.
         /// </summary>
         /// <param name="page">The page.</param>
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("'RequiresUnreferencedCodeAttribute' annotations must match across all interface implementations or overrides.")]
+#endif
         public string Get(Page page)
         {
             return Get(page, false);
@@ -193,7 +197,7 @@
 
             if (includePaths)
             {
-                foreach (var path in page.ExperimentalAccess.Paths)
+                foreach (var path in page.Paths)
                 {
                     hocr += "\n" + GetCode(path, page.Height, true, level + 1);
                 }
@@ -273,7 +277,7 @@
         private string GetCode(IPdfImage pdfImage, double pageHeight, int level)
         {
             imageCount++;
-            var bbox = pdfImage.Bounds;
+            var bbox = pdfImage.BoundingBox;
             return GetIndent(level) + "<span class='ocr_image' id='image_" + pageCount + "_"
                             + imageCount + "' title='" + GetCode(bbox, pageHeight) + "' />";
         }
@@ -333,8 +337,8 @@
 
             // http://kba.cloud/hocr-spec/1.2/#propdef-baseline
             // below will be 0 as long as the word's bounding box bottom is the BaseLine and not 'Bottom'
-            double baseLine = (double)line.Words[0].Letters[0].StartBaseLine.Y;
-            baseLine = (double)line.BoundingBox.Bottom - baseLine;
+            double baseLine = line.Words[0].Letters[0].StartBaseLine.Y;
+            baseLine = line.BoundingBox.Bottom - baseLine;
 
             string hocr = GetIndent(level) + "<span class='ocr_line' id='line_" + pageCount + "_" + lineCount + "' title='" +
                 GetCode(line.BoundingBox, pageHeight) + "; baseline " + angle + " 0'>"; //"; x_size 42; x_descenders 5; x_ascenders 12' >";

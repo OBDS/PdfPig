@@ -1,8 +1,6 @@
 ﻿namespace UglyToad.PdfPig.Tests.Integration;
 
 using Annotations;
-using System.Linq;
-using Xunit;
 
 public class AnnotationReplyToTests
 {
@@ -18,9 +16,9 @@ public class AnnotationReplyToTests
 
         var page = document.GetPage(1);
 
-        var annotations = page.ExperimentalAccess.GetAnnotations().ToList();
+        var annotations = page.GetAnnotations().ToArray();
 
-        Assert.Equal(4, annotations.Count);
+        Assert.Equal(4, annotations.Length);
 
         Assert.Equal(AnnotationType.Text, annotations[0].Type);
         Assert.Equal(AnnotationType.Popup, annotations[1].Type);
@@ -35,7 +33,7 @@ public class AnnotationReplyToTests
 
         var page = document.GetPage(1);
 
-        var annotations = page.ExperimentalAccess.GetAnnotations().ToList();
+        var annotations = page.GetAnnotations().ToArray();
 
         Assert.Equal(annotations[0], annotations[2].InReplyTo);
     }

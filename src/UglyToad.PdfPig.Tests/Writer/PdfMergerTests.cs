@@ -2,11 +2,6 @@
 {
     using Integration;
     using PdfPig.Writer;
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
-    using Xunit;
 
     public class PdfMergerTests
     {
@@ -56,7 +51,7 @@
                 Assert.Equal(2, document.NumberOfPages);
                 if (checkVersion)
                 {
-                    Assert.Equal(1.5m, document.Version);
+                    Assert.Equal(1.5, document.Version);
                 }
 
                 var page1 = document.GetPage(1);
@@ -102,7 +97,7 @@
             {
                 Assert.Equal(2, document.NumberOfPages);
                 Assert.True(document.Structure.CrossReferenceTable.ObjectOffsets.Count <= 24,
-                    "Expected object count to be lower than 24");
+                   "Expected object count to be lower than 24");
             }
         }
 
@@ -117,7 +112,7 @@
             {
                 Assert.Equal(2, document.NumberOfPages);
                 Assert.True(document.Structure.CrossReferenceTable.ObjectOffsets.Count <= 29,
-                    "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
+                   "Expected object count to be lower than 30"); // 45 objects with duplicates, 29 with correct re-use
             }
         }
 
@@ -199,7 +194,7 @@
             using (var document = PdfDocument.Open(result, ParsingOptions.LenientParsingOff))
             {
                 Assert.Equal(2, document.GetPages().Sum(
-                    page => page.ExperimentalAccess.GetAnnotations().Count(x => x.Type == Annotations.AnnotationType.Link)));
+                    page => page.GetAnnotations().Count(x => x.Type == Annotations.AnnotationType.Link)));
             }
         }
 
@@ -214,7 +209,7 @@
             using (var document = PdfDocument.Open(result, ParsingOptions.LenientParsingOff))
             {
                 Assert.Equal(1, document.GetPages().Sum(
-                    page => page.ExperimentalAccess.GetAnnotations().Count(x => x.Type == Annotations.AnnotationType.Link)));
+                    page => page.GetAnnotations().Count(x => x.Type == Annotations.AnnotationType.Link)));
             }
         }
 
@@ -253,6 +248,86 @@
             {
                 return null;
             }
+        }
+
+        [Fact]
+        public void CanMergeWhileFilesAreOpenForWritingElsewhere()
+        {
+            // Issue #1234: the source files must only be locked for reading, otherwise merging a file
+            // which is held open for writing by something else (an antivirus scanner, another handle
+            // in the same process, ...) fails with 'the file is being used by another process'.
+            var one = CopyToTemporaryFile("Single Page Simple - from inkscape.pdf");
+            var two = CopyToTemporaryFile("Single Page Simple - from open office.pdf");
+
+            try
+            {
+                using (OpenForWriting(one))
+                using (OpenForWriting(two))
+                {
+                    CanMerge2SimpleDocumentsAssertions(
+                        new MemoryStream(PdfMerger.Merge(one, two)),
+                        "Write something inInkscape",
+                        "I am a simple pdf.");
+
+                    CanMerge2SimpleDocumentsAssertions(
+                        new MemoryStream(PdfMerger.Merge(new[] { one, two })),
+                        "Write something inInkscape",
+                        "I am a simple pdf.");
+                }
+            }
+            finally
+            {
+                File.Delete(one);
+                File.Delete(two);
+            }
+        }
+
+        [Fact]
+        public void MergeDoesNotDisposeCallerProvidedStreams()
+        {
+            using (var one = OpenTrackingStream("Single Page Simple - from inkscape.pdf"))
+            using (var two = OpenTrackingStream("Single Page Simple - from open office.pdf"))
+            using (var output = new MemoryStream())
+            {
+                PdfMerger.Merge(new Stream[] { one, two }, output);
+
+                Assert.Equal(0, one.DisposeCount);
+                Assert.Equal(0, two.DisposeCount);
+
+                CanMerge2SimpleDocumentsAssertions(output, "Write something inInkscape", "I am a simple pdf.");
+            }
+        }
+
+        private static DisposeTrackingStream OpenTrackingStream(string documentName)
+        {
+            return new DisposeTrackingStream(File.ReadAllBytes(IntegrationHelpers.GetDocumentPath(documentName)));
+        }
+
+        private sealed class DisposeTrackingStream : MemoryStream
+        {
+            public DisposeTrackingStream(byte[] buffer) : base(buffer)
+            {
+            }
+
+            public int DisposeCount { get; private set; }
+
+            protected override void Dispose(bool disposing)
+            {
+                DisposeCount++;
+                base.Dispose(disposing);
+            }
+        }
+
+        private static string CopyToTemporaryFile(string documentName)
+        {
+            var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.pdf");
+            File.Copy(IntegrationHelpers.GetDocumentPath(documentName), path);
+            return path;
+        }
+
+        private static FileStream OpenForWriting(string path)
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
         }
 
         [Fact]

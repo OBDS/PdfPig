@@ -1,16 +1,19 @@
 ﻿namespace UglyToad.PdfPig.Filters
 {
     using System;
-    using System.Collections.Generic;
     using Tokens;
 
-    internal class JpxDecodeFilter : IFilter
+    /// <summary>
+    /// JPX Filter (JPEG2000) for image data.
+    /// <para>This filter is not implemented and will not be used during parsing.</para>
+    /// </summary>
+    public sealed class JpxDecodeFilter : IFilter
     {
         /// <inheritdoc />
         public bool IsSupported { get; } = false;
 
         /// <inheritdoc />
-        public byte[] Decode(IReadOnlyList<byte> input, DictionaryToken streamDictionary, int filterIndex)
+        public Memory<byte> Decode(Memory<byte> input, DictionaryToken streamDictionary, IFilterProvider filterProvider, int filterIndex)
         {
             throw new NotSupportedException("The JPX Filter (JPEG2000) for image data is not currently supported. " +
                                             "Try accessing the raw compressed data directly.");

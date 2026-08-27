@@ -1,12 +1,13 @@
 ﻿namespace UglyToad.PdfPig
 {
+    using Filters;
     using System.Collections.Generic;
     using Logging;
 
     /// <summary>
     /// Configures options used by the parser when reading PDF documents.
     /// </summary>
-    public sealed class ParsingOptions
+    public class ParsingOptions
     {
         /// <summary>
         /// A default <see cref="ParsingOptions"/> with <see cref="UseLenientParsing"/> set to false.
@@ -50,5 +51,26 @@
         /// forms and images when missing.
         /// </summary>
         public bool SkipMissingFonts { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the maximum allowed stack depth.
+        /// </summary>
+        /// <remarks>This property can be used to limit the depth of recursive or nested operations to
+        /// prevent stack overflows or excessive resource usage.</remarks>
+        public int MaxStackDepth { get; set; } = 256;
+
+        /// <summary>
+        /// Filter provider to use while parsing the document. The <see cref="DefaultFilterProvider"/> will be used if set to <c>null</c>.
+        /// </summary>
+        public IFilterProvider? FilterProvider { get; set; } = null;
+
+        /// <summary>
+        /// Should the parser use the replacement text specified by marked-content <c>/ActualText</c> entries
+        /// when extracting text. When enabled, content enclosed by an <c>/ActualText</c> sequence is extracted
+        /// using that replacement text (see the PDF specification, 14.9.4 "Replacement text") instead of the
+        /// enclosed glyphs' own Unicode values.
+        /// Defaults to <see langword="false"/>.
+        /// </summary>
+        public bool UseActualText { get; set; } = false;
     }
 }

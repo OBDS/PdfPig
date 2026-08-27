@@ -12,14 +12,19 @@
     /// </summary>
     public class AppearanceStream
     {
-        private readonly IDictionary<string, StreamToken> appearanceStreamsByState;
+        private readonly IDictionary<string, StreamToken>? appearanceStreamsByState;
 
-        private readonly StreamToken statelessAppearanceStream;
+        private readonly StreamToken? statelessAppearanceStream;
 
         /// <summary>
         /// Indicates if this appearance stream is stateless, or whether you can get appearances by state.
         /// </summary>
         public bool IsStateless => statelessAppearanceStream != null;
+
+        /// <summary>
+        /// The stateless appearance stream, if this appearance stream is stateless.
+        /// </summary>
+        public StreamToken? StatelessAppearanceStream => statelessAppearanceStream;
 
         /// <summary>
         /// Get list of states. If this is a stateless appearance stream, an empty collection is returned.
@@ -30,7 +35,7 @@
         /// Constructor for stateless appearance stream
         /// </summary>
         /// <param name="streamToken"></param>
-        internal AppearanceStream(StreamToken streamToken)
+        internal AppearanceStream(StreamToken? streamToken)
         {
             statelessAppearanceStream = streamToken;
         }
@@ -53,7 +58,7 @@
         /// <exception cref="ArgumentOutOfRangeException"></exception>
         public StreamToken Get(string state)
         {
-            if (appearanceStreamsByState == null)
+            if (appearanceStreamsByState is null)
             {
                 throw new Exception("Cannot get appearance by state when this is a stateless appearance stream");
             }

@@ -9,6 +9,11 @@
     public abstract class Encoding
     {
         /// <summary>
+        /// <c>.notdef</c>.
+        /// </summary>
+        protected internal const string NotDefined = ".notdef";
+
+        /// <summary>
         /// Mutable code to name map.
         /// </summary>
         protected readonly Dictionary<int, string> CodeToName = new Dictionary<int, string>(250);
@@ -24,7 +29,7 @@
         protected readonly Dictionary<string, int> NameToCode = new Dictionary<string, int>(250);
 
         /// <summary>
-        /// Maps from names to character cocdes.
+        /// Maps from names to character codes.
         /// </summary>
         public IReadOnlyDictionary<string, int> NameToCodeMap => NameToCode;
 
@@ -48,7 +53,7 @@
         {
             return CodeToName.ContainsKey(code);
         }
-        
+
         /// <summary>
         /// Get the character name corresponding to the given code.
         /// </summary>
@@ -56,17 +61,16 @@
         {
             if (!CodeToName.TryGetValue(code, out var name))
             {
-                return ".notdef";
+                return NotDefined;
             }
 
             return name;
         }
 
-
         /// <summary>
-        /// Get the character code from name 
+        /// Get the character code from name
         /// </summary>
-        /// <param name="name">Character name (eg. euro, ampersand, A, space)</param>
+        /// <param name="name">Character name (e.g. euro, ampersand, A, space)</param>
         /// <returns>-1 if not found otherwise the character code</returns>
         public virtual int GetCode(string name)
         {
@@ -90,15 +94,15 @@
                 NameToCode[name] = code;
             }
         }
-        
+
         /// <summary>
         /// Get a known encoding instance with the given name.
         /// </summary>
-        public static bool TryGetNamedEncoding(NameToken name, out Encoding encoding)
+        public static bool TryGetNamedEncoding(NameToken? name, out Encoding? encoding)
         {
             encoding = null;
 
-            if (name == null)
+            if (name is null)
             {
                 return false;
             }
@@ -106,28 +110,26 @@
             if (name.Equals(NameToken.StandardEncoding))
             {
                 encoding = StandardEncoding.Instance;
-                return true;
             }
 
             if (name.Equals(NameToken.WinAnsiEncoding))
             {
                 encoding = WinAnsiEncoding.Instance;
-                return true;
             }
 
             if (name.Equals(NameToken.MacExpertEncoding))
             {
                 encoding = MacExpertEncoding.Instance;
-                return true;
             }
 
             if (name.Equals(NameToken.MacRomanEncoding))
             {
                 encoding = MacRomanEncoding.Instance;
-                return true;
             }
 
-            return false;
+            // NB: PDFDocEncoding is not valid here
+            
+            return encoding is not null;
         }
     }
 }

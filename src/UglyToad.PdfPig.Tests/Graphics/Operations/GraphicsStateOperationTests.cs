@@ -1,14 +1,10 @@
 ﻿namespace UglyToad.PdfPig.Tests.Graphics.Operations
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
     using System.Reflection;
     using PdfPig.Graphics.Operations;
     using PdfPig.Graphics.Operations.InlineImages;
     using PdfPig.Tokens;
-    using Xunit;
+    using UglyToad.PdfPig.Graphics;
 
     public class GraphicsStateOperationTests
     {
@@ -44,7 +40,7 @@
                 }
                 else if (operationType == typeof(EndInlineImage))
                 {
-                    operation = new EndInlineImage(new List<byte>());
+                    operation = new EndInlineImage([]);
                 }
                 else if (operationType == typeof(BeginInlineImageData))
                 {
@@ -68,14 +64,42 @@
             }
         }
 
-        private static IEnumerable<Type> GetOperationTypes()
+        // Test that ReflectionGraphicsStateOperationFactory.operations contains all supported graphics operations
+        [Fact]
+        public void ReflectionGraphicsStateOperationFactoryKnowsAllOperations()
+        {
+            var operationsField = typeof(ReflectionGraphicsStateOperationFactory)
+                .GetField("Operations", BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(operationsField);
+
+            var operationDictionaryRaw = operationsField.GetValue(null) as IReadOnlyDictionary<string, Type>;
+
+            Assert.NotNull(operationDictionaryRaw);
+
+            var operationDictionary = new Dictionary<string, Type>(operationDictionaryRaw!.ToDictionary(x => x.Key, x => x.Value));
+
+            var allOperations = GetOperationTypes();
+
+            Assert.Equal(allOperations.Count, operationDictionary.Count);
+
+            var mapped = allOperations.Select(o =>
+            {
+                var symbol = o.GetField("Symbol").GetValue(null)!.ToString()!;
+                return new KeyValuePair<string, Type>(symbol, o);
+            });
+
+            Assert.Equivalent(operationDictionary, mapped, strict: true);
+        }
+
+        private static IReadOnlyList<Type> GetOperationTypes()
         {
             var assembly = Assembly.GetAssembly(typeof(IGraphicsStateOperation));
 
             var operationTypes = assembly.GetTypes().Where(x => typeof(IGraphicsStateOperation).IsAssignableFrom(x)
                                                                 && !x.IsInterface);
 
-            return operationTypes;
+            return operationTypes.ToList();
         }
 
         private static object[] GetConstructorParameters(ParameterInfo[] parameters)
@@ -95,17 +119,17 @@
                 {
                     result[i] = NameToken.Create("Hog");
                 }
-                else if (type == typeof(decimal))
+                else if (type == typeof(double))
                 {
-                    result[i] = 0.5m;
+                    result[i] = 0.5;
                 }
                 else if (type == typeof(int))
                 {
                     result[i] = 1;
                 }
-                else if (type == typeof(decimal[]) || type == typeof(IReadOnlyList<decimal>))
+                else if (type == typeof(double[]) || type == typeof(IReadOnlyList<double>))
                 {
-                    result[i] = new decimal[]
+                    result[i] = new double[]
                     {
                         1, 0, 0, 1, 2, 5
                     };

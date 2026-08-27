@@ -1,9 +1,17 @@
 ﻿namespace UglyToad.PdfPig.Tests.Integration
 {
-    using Xunit;
-
     public class ShadingTests
     {
+        [Fact]
+        public void Issue702()
+        {
+            // Placeholder test for issue 702, the document contains a FunctionBasedShading
+            using (var document = PdfDocument.Open(IntegrationHelpers.GetDocumentPath("PDFBOX-1869-4-1.pdf")))
+            {
+                var page1 = document.GetPage(1);
+            }
+        }
+
         [Fact]
         public void AxialRadial1()
         {

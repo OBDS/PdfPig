@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Fonts;
     using Fonts.Encodings;
     using PdfPig.Parser.Parts;
@@ -11,28 +12,32 @@
     internal class EncodingReader : IEncodingReader
     {
         private readonly IPdfTokenScanner pdfScanner;
+        private readonly ParsingOptions parsingOptions;
 
-        public EncodingReader(IPdfTokenScanner pdfScanner)
+        public EncodingReader(IPdfTokenScanner pdfScanner, ParsingOptions parsingOptions)
         {
             this.pdfScanner = pdfScanner;
+            this.parsingOptions = parsingOptions;
         }
 
-        public Encoding Read(DictionaryToken fontDictionary, FontDescriptor descriptor = null,
-            Encoding fontEncoding = null)
+        public Encoding? Read(
+            DictionaryToken fontDictionary,
+            FontDescriptor? descriptor = null,
+            Encoding? fontEncoding = null)
         {
             if (!fontDictionary.TryGet(NameToken.Encoding, out var baseEncodingObject))
             {
                 return null;
             }
 
-            if (DirectObjectFinder.TryGet(baseEncodingObject, pdfScanner, out NameToken name))
+            if (DirectObjectFinder.TryGet(baseEncodingObject, pdfScanner, out NameToken? name))
             {
                 if (TryGetNamedEncoding(descriptor, name, out var namedEncoding))
                 {
                     return namedEncoding;
                 }
 
-                if (fontDictionary.TryGet(NameToken.BaseFont, pdfScanner, out NameToken baseFontName))
+                if (fontDictionary.TryGet(NameToken.BaseFont, pdfScanner, out NameToken? baseFontName))
                 {
                     if (string.Equals(baseFontName.Data, "ZapfDingbats", StringComparison.OrdinalIgnoreCase))
                     {
@@ -48,26 +53,42 @@
                 }
             }
 
-            DictionaryToken encodingDictionary = DirectObjectFinder.Get<DictionaryToken>(baseEncodingObject, pdfScanner);
+            DictionaryToken? encodingDictionary = DirectObjectFinder.Get<DictionaryToken>(baseEncodingObject, pdfScanner);
 
             var encoding = ReadEncodingDictionary(encodingDictionary, fontEncoding);
 
             return encoding;
         }
 
-        private Encoding ReadEncodingDictionary(DictionaryToken encodingDictionary, Encoding fontEncoding)
+        private Encoding? ReadEncodingDictionary(DictionaryToken? encodingDictionary, Encoding? fontEncoding)
         {
-            if (encodingDictionary == null)
+            if (encodingDictionary is null)
             {
                 return null;
             }
             
-            Encoding baseEncoding;
+            Encoding? baseEncoding;
             if (encodingDictionary.TryGet(NameToken.BaseEncoding, out var baseEncodingToken) && baseEncodingToken is NameToken baseEncodingName)
             {
                 if (!Encoding.TryGetNamedEncoding(baseEncodingName, out baseEncoding))
                 {
-                    throw new InvalidFontFormatException($"No encoding found with name {baseEncodingName} to use as base encoding.");
+                    if (!parsingOptions.UseLenientParsing)
+                    {
+                        throw new InvalidFontFormatException($"No encoding found with name '{baseEncodingName}' to use as base encoding.");
+                    }
+
+                    if (NameToken.PdfDocEncoding.Equals(baseEncodingName))
+                    {
+                        // PdfDocEncoding is not valid here, but we are using LenientParsing
+                        parsingOptions.Logger.Warn($"'{NameToken.PdfDocEncoding}' encoding found to use as base encoding, using it even if not valid.");
+                        baseEncoding = PdfDocEncoding.Instance;
+                    }
+                    else
+                    {
+                        // We treat the 'baseEncodingName' as absent
+                        parsingOptions.Logger.Warn($"No encoding found with name '{baseEncodingName}' to use as base encoding, falling back to the font encoding.");
+                        baseEncoding = fontEncoding ?? StandardEncoding.Instance;
+                    }
                 }
             }
             else
@@ -90,11 +111,11 @@
             return newEncoding;
         }
 
-        private static IReadOnlyList<(int, string)> ProcessDifferences(ArrayToken differenceArray)
+        private static IReadOnlyList<(int, string)> ProcessDifferences(ArrayToken? differenceArray)
         {
             var differences = new List<(int, string)>();
 
-            if (differenceArray.Length == 0)
+            if (differenceArray is null || differenceArray.Length == 0)
             {
                 return differences;
             }
@@ -120,7 +141,7 @@
             return differences;
         }
 
-        private static bool TryGetNamedEncoding(FontDescriptor descriptor, NameToken encodingName, out Encoding encoding)
+        private static bool TryGetNamedEncoding(FontDescriptor? descriptor, NameToken encodingName, [NotNullWhen(true)] out Encoding? encoding)
         {
             encoding = null;
             // Symbolic fonts default to standard encoding.
@@ -134,8 +155,7 @@
                 return false;
             }
 
-            return true;
+            return encoding is not null;
         }
     }
 }
-

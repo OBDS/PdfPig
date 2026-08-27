@@ -1,6 +1,6 @@
 ﻿namespace UglyToad.PdfPig.Filters
 {
-    using System.Collections.Generic;
+    using System;
     using Tokens;
 
     /// <summary>
@@ -18,8 +18,9 @@
         /// </summary>
         /// <param name="input">The encoded bytes which were encoded using this filter.</param>
         /// <param name="streamDictionary">The dictionary of the <see cref="StreamToken"/> (or other dictionary types, e.g. inline images) containing these bytes.</param>
+        /// <param name="filterProvider">The filter provider.</param>
         /// <param name="filterIndex">The position of this filter in the pipeline used to encode data.</param>
         /// <returns>The decoded bytes.</returns>
-        byte[] Decode(IReadOnlyList<byte> input, DictionaryToken streamDictionary, int filterIndex);
+        Memory<byte> Decode(Memory<byte> input, DictionaryToken streamDictionary, IFilterProvider filterProvider, int filterIndex);
     }
 }

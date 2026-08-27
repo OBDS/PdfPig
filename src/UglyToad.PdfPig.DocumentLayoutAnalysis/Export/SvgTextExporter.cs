@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Text;
     using System.Xml;
@@ -65,11 +66,14 @@
         /// <summary>
         /// Get the page contents as an SVG.
         /// </summary>
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("'RequiresUnreferencedCodeAttribute' annotations must match across all interface implementations or overrides.")]
+#endif
         public string Get(Page page)
         {
             var builder = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width='{Math.Round(page.Width, Rounding)}' height='{Math.Round(page.Height, Rounding)}'>\n<g transform=\"scale(1, 1) translate(0, 0)\">\n");
 
-            foreach (var path in page.ExperimentalAccess.Paths)
+            foreach (var path in page.Paths)
             {
                 if (!path.IsClipping)
                 {
@@ -92,12 +96,12 @@
         {
             string fontFamily = GetFontFamily(l.FontName, out string style, out string weight);
             string rotation = "";
-            if (l.GlyphRectangle.Rotation != 0)
+            if (l.BoundingBox.Rotation != 0)
             {
-                rotation = $" transform='rotate({Math.Round(-l.GlyphRectangle.Rotation, Rounding)} {Math.Round(l.GlyphRectangle.BottomLeft.X, Rounding)},{Math.Round(height - l.GlyphRectangle.TopLeft.Y, Rounding)})'";
+                rotation = $" transform='rotate({Math.Round(-l.BoundingBox.Rotation, Rounding)} {Math.Round(l.BoundingBox.BottomLeft.X, Rounding)},{Math.Round(height - l.BoundingBox.TopLeft.Y, Rounding)})'";
             }
 
-            string fontSize = l.FontSize != 1 ? $"font-size='{l.FontSize:0}'" : $"style='font-size:{Math.Round(l.GlyphRectangle.Height, 2)}px'";
+            string fontSize = l.FontSize != 1 ? $"font-size='{l.FontSize:0}'" : $"style='font-size:{Math.Round(l.BoundingBox.Height, 2)}px'";
 
             var safeValue = XmlEscape(l, doc);
             var x = Math.Round(l.StartBaseLine.X, Rounding);

@@ -1,6 +1,8 @@
 ﻿namespace UglyToad.PdfPig.Content
 {
+    using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
     using Graphics.Colors;
     using Graphics.Core;
@@ -10,11 +12,13 @@
     /// <summary>
     /// An image in a PDF document, may be an <see cref="InlineImage"/> or a PostScript image XObject (<see cref="XObjectImage"/>).
     /// </summary>
-    public interface IPdfImage
+    public interface IPdfImage: IBoundingBox
     {
         /// <summary>
         /// The placement rectangle of the image in PDF coordinates.
+        /// Kept so not major breaking API change. Use instead <see cref="IBoundingBox.BoundingBox"/>
         /// </summary>
+        [Obsolete("Use BoundingBox instead.")]
         PdfRectangle Bounds { get; }
 
         /// <summary>
@@ -33,11 +37,16 @@
         int BitsPerComponent { get; }
 
         /// <summary>
-        /// The encoded bytes of the image with all filters still applied.
+        /// The encoded memory of the image with all filters still applied.
         /// </summary>
-        IReadOnlyList<byte> RawBytes { get; }
+        Memory<byte> RawMemory { get; }
 
-            /// <summary>
+        /// <summary>
+        /// The encoded memory span of the image with all filters still applied.
+        /// </summary>
+        Span<byte> RawBytes { get; }
+
+        /// <summary>
         /// The color rendering intent to be used when rendering the image.
         /// </summary>
         RenderingIntent RenderingIntent { get; }
@@ -60,7 +69,7 @@
         /// The value from the image data is then interpolated into the values relevant to the <see cref="ColorSpace"/>
         /// using the corresponding values of the decode array.
         /// </summary>
-        IReadOnlyList<decimal> Decode { get; }
+        IReadOnlyList<double> Decode { get; }
 
         /// <summary>
         /// Specifies whether interpolation is to be performed. Interpolation smooths images where a single component in the image
@@ -85,17 +94,23 @@
         /// This is not defined where <see cref="IsImageMask"/> is <see langword="true"/> and is optional where the image is JPXEncoded for <see cref="XObjectImage"/>.
         /// </para>
         /// </summary>
-        ColorSpaceDetails ColorSpaceDetails { get; }
+        ColorSpaceDetails? ColorSpaceDetails { get; }
 
         /// <summary>
-        /// Get the decoded bytes of the image if applicable. For JPEG images and some other types the
-        /// <see cref="RawBytes"/> should be used directly.
+        /// The image mask.
+        /// <para>Either a Soft-mask or a Stencil mask.</para>
         /// </summary>
-        bool TryGetBytes(out IReadOnlyList<byte> bytes);
+        IPdfImage? MaskImage { get; }
+
+        /// <summary>
+        /// Get the decoded memory of the image if applicable. For JPEG images and some other types the
+        /// <see cref="RawMemory"/> should be used directly.
+        /// </summary>
+        bool TryGetBytesAsMemory(out Memory<byte> memory);
 
         /// <summary>
         /// Try to convert the image to PNG. Doesn't support conversion of JPG to PNG.
         /// </summary>
-        bool TryGetPng(out byte[] bytes);
+        bool TryGetPng([NotNullWhen(true)] out byte[]? bytes);
     }
 }

@@ -10,7 +10,7 @@
     using PdfPig.Fonts.Encodings;
     using Tokens;
 
-    internal class Standard14WritingFont : IWritingFont
+    internal sealed class Standard14WritingFont : IWritingFont
     {
         private readonly AdobeFontMetrics metrics;
 
@@ -25,7 +25,6 @@
 
         public bool TryGetBoundingBox(char character, out PdfRectangle boundingBox)
         {
-
             boundingBox = default(PdfRectangle);
 
             int code = CodeMapIfUnicode(character);
@@ -39,7 +38,7 @@
                                    .Where(v => v.Value.CharacterCode == code)
                                    .Select(v => v.Value)
                                    .FirstOrDefault();
-            if (characterMetric == null)
+            if (characterMetric is null)
             {
                 Debug.WriteLine($"Font '{metrics.FontName}' does NOT have character '{character}' (0x{(int)character:X}).");
                 return false;
@@ -70,7 +69,7 @@
             return TransformationMatrix.FromValues(1 / 1000.0, 0, 0, 1 / 1000.0, 0, 0);
         }
 
-        public IndirectReferenceToken WriteFont(IPdfStreamWriter writer, IndirectReferenceToken reservedIndirect = null)
+        public IndirectReferenceToken WriteFont(IPdfStreamWriter writer, IndirectReferenceToken? reservedIndirect = null)
         {
             var encoding = NameToken.StandardEncoding;
             if (string.Equals(metrics.FontName, "Symbol", StringComparison.OrdinalIgnoreCase)
@@ -107,7 +106,7 @@
                                     .Where(v => v.Value.CharacterCode == characterCode)
                                     .Select(v => v.Value)
                                     .FirstOrDefault();
-            if (characterMetric == null)
+            if (characterMetric is null)
             {
                 throw new NotSupportedException($"Font '{metrics.FontName}' does NOT have character '{character}' (0x{(int)character:X}).");
             }
@@ -118,7 +117,7 @@
         private int UnicodeToSymbolCode(char character)
         {
             var name = GlyphList.AdobeGlyphList.UnicodeCodePointToName(character);
-            if (string.Equals(name, ".notdef", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
             {
                 return -1;
             }
@@ -134,7 +133,7 @@
         private int UnicodeToZapfDingbats(char character)
         {
             var name = GlyphList.ZapfDingbats.UnicodeCodePointToName(character);
-            if (string.Equals(name, ".notdef", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
             {
                 Debug.WriteLine($"Failed to find Unicode character '{character}' (0x{(int)character:X}).");
                 return -1;
@@ -147,13 +146,12 @@
                 Debug.WriteLine($"Found Unicode point '{character}' (0x{(int)character:X}) but glphy name '{name}' not found in font '{metrics.FontName}' (font specific encoding: ZapfDingbats).");
             }
             return code;
-
         }
 
         private int UnicodeToStandardEncoding(char character)
         {
             var name = GlyphList.AdobeGlyphList.UnicodeCodePointToName(character);
-            if (string.Equals(name, ".notdef", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
             {
                 Debug.WriteLine($"Failed to find Unicode character '{character}' (0x{(int)character:X}).");
                 return -1;
@@ -167,7 +165,7 @@
                 code = standardEncoding.GetCode(nameCapitalisedChange);
                 if (code == -1)
                 {
-                    Debug.WriteLine($"Found Unicode point '{character}' (0x{(int)character:X}) but glphy name '{name}' not found in font '{metrics.FontName}' (StandardEncoding).");
+                    Debug.WriteLine($"Found Unicode point '{character}' (0x{(int)character:X}) but glyph name '{name}' not found in font '{metrics.FontName}' (StandardEncoding).");
                 }
             }
             return code;

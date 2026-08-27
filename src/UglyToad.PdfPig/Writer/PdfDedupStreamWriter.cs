@@ -5,15 +5,15 @@
     using System.IO;
     using Tokens;
 
-    internal class PdfDedupStreamWriter : PdfStreamWriter
+    internal sealed class PdfDedupStreamWriter : PdfStreamWriter
     {
         private readonly Dictionary<byte[], IndirectReferenceToken> hashes = new Dictionary<byte[], IndirectReferenceToken>(new FNVByteComparison());
 
         public PdfDedupStreamWriter(
             Stream stream,
             bool dispose,
-            ITokenWriter tokenWriter = null,
-            Action<decimal> recordVersion = null
+            ITokenWriter? tokenWriter = null,
+            Action<double>? recordVersion = null
             ) : base(stream, dispose, tokenWriter, recordVersion)
         {
         }
@@ -69,24 +69,11 @@
             base.Dispose();
         }
 
-        class FNVByteComparison : IEqualityComparer<byte[]>
+        private sealed class FNVByteComparison : IEqualityComparer<byte[]>
         {
             public bool Equals(byte[] x, byte[] y)
             {
-                if (x.Length != y.Length)
-                {
-                    return false;
-                }
-
-                for (var i = 0; i < x.Length; i++)
-                {
-                    if (x[i] != y[i])
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
+                return x.AsSpan().SequenceEqual(y.AsSpan());
             }
 
             public int GetHashCode(byte[] obj)
@@ -104,7 +91,7 @@
         /// <summary>
         /// A hash combiner that is implemented with the Fowler/Noll/Vo algorithm (FNV-1a). This is a mutable struct for performance reasons.
         /// </summary>
-        struct FnvHash
+        private struct FnvHash
         {
             /// <summary>
             /// The starting point of the FNV hash.
@@ -126,9 +113,10 @@
             /// </summary>
             public static FnvHash Create()
             {
-                var result = new FnvHash();
-                result.HashCode = Offset;
-                return result;
+                return new FnvHash
+                {
+                    HashCode = Offset
+                };
             }
 
             /// <summary>

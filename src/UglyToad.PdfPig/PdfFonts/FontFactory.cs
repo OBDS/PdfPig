@@ -39,9 +39,28 @@
 
             var subtype = dictionary.GetNameOrDefault(NameToken.Subtype);
 
-            if (handlers.TryGetValue(subtype, out var handler))
+            if (subtype != null && handlers.TryGetValue(subtype, out var handler))
             {
                 return handler.Generate(dictionary);
+            }
+
+            // Try simple font recovery:
+            NameToken[] orderedFallbacks = [NameToken.Type1, NameToken.TrueType];
+            foreach (var fallback in orderedFallbacks)
+            {
+                if (!handlers.TryGetValue(fallback, out handler))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    return handler.Generate(dictionary);
+                }
+                catch (Exception ex)
+                {
+                    log?.Error($"Tried to parse font as fallback type: {fallback}", ex);
+                }
             }
 
             throw new NotImplementedException($"Parsing not implemented for fonts of type: {subtype}, please submit a pull request or an issue.");

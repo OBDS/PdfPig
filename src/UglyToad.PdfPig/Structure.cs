@@ -4,9 +4,10 @@
     using Content;
     using Core;
     using CrossReference;
+    using Filters;
+    using System.Linq;
     using Tokenization.Scanner;
     using Tokens;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// Provides access to explore and retrieve the underlying PDF objects from the document.
@@ -16,26 +17,47 @@
         /// <summary>
         /// The root of the document's hierarchy providing access to the page tree as well as other information.
         /// </summary>
-        [NotNull]
         public Catalog Catalog { get; }
         
         /// <summary>
-        /// The cross-reference table enables direct access to objects by number.
+        /// The xref table of the document. Contains objects from all parsed xref tables.
         /// </summary>
-        [NotNull]
         public CrossReferenceTable CrossReferenceTable { get; }
+        
+        /// <summary>
+        /// The trailer dictionary of the document. Contains most bottom trailer
+        /// </summary>
+        public TrailerDictionary Trailer { get; }
+        
+        /// <summary>
+        /// The offset of the xref table/object stream
+        /// </summary>
+        public long XrefOffset { get; }
 
         /// <summary>
         /// Provides access to tokenization capabilities for objects by object number.
+        /// This is the document-level token scanner used to dereference indirect object references.
         /// </summary>
-        internal IPdfTokenScanner TokenScanner { get; }
+        public IPdfTokenScanner TokenScanner { get; }
 
-        internal Structure(Catalog catalog, CrossReferenceTable crossReferenceTable,
-            IPdfTokenScanner scanner)
+        /// <summary>
+        /// Provides access to the filter provider this document was parsed with.
+        /// </summary>
+        public ILookupFilterProvider FilterProvider { get; }
+
+        internal Structure(
+            Catalog catalog,
+            IPdfTokenScanner scanner,
+            ILookupFilterProvider filterProvider,
+            TrailerDictionary trailer,
+            CrossReferenceTable xrefTable)
         {
+            Trailer = trailer ?? throw new ArgumentNullException(nameof(trailer));
             Catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
-            CrossReferenceTable = crossReferenceTable ?? throw new ArgumentNullException(nameof(crossReferenceTable));
             TokenScanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
+            FilterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
+            CrossReferenceTable = xrefTable ?? throw new ArgumentNullException(nameof(xrefTable));
+            XrefOffset = CrossReferenceTable.Parts.Count > 0 ? CrossReferenceTable.Parts.Last().Offset : 0;
         }
 
         /// <summary>

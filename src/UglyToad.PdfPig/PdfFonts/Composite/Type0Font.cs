@@ -1,46 +1,51 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Composite
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using CidFonts;
     using Cmap;
     using Core;
     using Geometry;
-    using System;
-    using System.Collections.Generic;
     using Tokens;
-    using Util.JetBrains.Annotations;
     using Debug = System.Diagnostics.Debug;
 
     /// <summary>
     /// Defines glyphs using a CIDFont
     /// </summary>
-    internal class Type0Font : IFont, IVerticalWritingSupported
+    internal sealed class Type0Font : IFont, IVerticalWritingSupported
     {
-        private readonly CMap ucs2CMap;
+        private readonly CMap? ucs2CMap;
         // ReSharper disable once NotAccessedField.Local
         private readonly bool isChineseJapaneseOrKorean;
         private readonly Dictionary<int, CharacterBoundingBox> boundingBoxCache
             = new Dictionary<int, CharacterBoundingBox>();
 
+        private readonly bool useLenientParsing;
+        private readonly double ascent;
+        private readonly double descent;
+
         public NameToken Name => BaseFont;
 
-        [NotNull]
         public NameToken BaseFont { get; }
 
-        [NotNull]
         public ICidFont CidFont { get; }
 
-        [NotNull]
         public CMap CMap { get; }
 
-        [NotNull]
         public ToUnicodeCMap ToUnicode { get; }
 
         public bool IsVertical => CMap.WritingMode == WritingMode.Vertical;
 
         public FontDetails Details { get; }
 
-        public Type0Font(NameToken baseFont, ICidFont cidFont, CMap cmap, CMap toUnicodeCMap,
-            CMap ucs2CMap,
+        public Type0Font(
+            NameToken baseFont,
+            ICidFont cidFont,
+            CMap cmap,
+            CMap? toUnicodeCMap,
+            CMap? ucs2CMap,
+            ParsingOptions parsingOptions,
             bool isChineseJapaneseOrKorean)
         {
             this.ucs2CMap = ucs2CMap;
@@ -52,28 +57,53 @@
             ToUnicode = new ToUnicodeCMap(toUnicodeCMap);
             Details = cidFont.Details?.WithName(Name.Data)
                       ?? FontDetails.GetDefault(Name.Data);
+
+            useLenientParsing = parsingOptions.UseLenientParsing;
+            ascent = ComputeAscent();
+            descent = ComputeDescent();
+        }
+
+        private double ComputeDescent()
+        {
+            double d = CidFont.GetDescent();
+            if (Math.Abs(d) > double.Epsilon)
+            {
+                return GetFontMatrix().TransformY(d);
+            }
+
+            return -0.25;
+        }
+
+        private double ComputeAscent()
+        {
+            double a = CidFont.GetAscent();
+            if (Math.Abs(a) > double.Epsilon)
+            {
+                return GetFontMatrix().TransformY(a);
+            }
+
+            return 0.75;
         }
 
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
         {
             var current = bytes.CurrentOffset;
 
-            var code = CMap.ReadCode(bytes);
+            var code = CMap.ReadCode(bytes, useLenientParsing);
 
-            codeLength = (int)(bytes.CurrentOffset - current);
+            codeLength = (int)(bytes.CurrentOffset - current) + 1;
 
             return code;
         }
 
-        public bool TryGetUnicode(int characterCode, out string value)
+        public bool TryGetUnicode(int characterCode, [NotNullWhen(true)] out string? value)
         {
             value = null;
 
             var HaveCMap = ToUnicode.CanMapToUnicode;
             if (HaveCMap == false)
             {
-                var HaveUnicode2CMap = (ucs2CMap is null == false);
-                if (HaveUnicode2CMap)
+                if (ucs2CMap != null)
                 {
                     // Have both ucs2Map and CMap convert to unicode by
                     // characterCode  ----by CMAP---> CID ---ucs2Map---> Unicode
@@ -88,10 +118,10 @@
                     {
                         return value != null;
                     }
-                }
-                if (HaveUnicode2CMap) // 2022-12-24 @fnatzke left as fall-back. Possible?
-                {
-                    // characterCode ---ucs2Map---> Unicode      (?) @fnatzke possible?
+                
+                    // 2022-12-24 @fnatzke left as fall-back. Possible?
+                
+                    // characterCode ---ucs2Map---> Unicode (?) @fnatzke possible?
                     if (ucs2CMap.TryConvertToUnicode(characterCode, out value))
                     {
                         return value != null;
@@ -117,17 +147,16 @@
                 return cached;
             }
 
-            var matrix = GetFontMatrix();
-
-            var boundingBox = GetBoundingBoxInGlyphSpace(characterCode);
-
-            boundingBox = matrix.Transform(boundingBox);
-
             var characterIdentifier = CMap.ConvertToCid(characterCode);
 
-            var width = CidFont.GetWidthFromFont(characterIdentifier);
+            // Get the bounding box in glyph space
+            var boundingBox = CidFont.GetBoundingBox(characterIdentifier);
 
-            var advanceWidth = matrix.TransformX(width);
+            boundingBox = CidFont.GetFontMatrix(characterIdentifier).Transform(boundingBox);
+
+            var width = CidFont.GetWidthFromDictionary(characterIdentifier);
+
+            var advanceWidth = width / 1000.0;
 
             var result = new CharacterBoundingBox(boundingBox, advanceWidth);
 
@@ -136,16 +165,19 @@
             return result;
         }
 
-        public PdfRectangle GetBoundingBoxInGlyphSpace(int characterCode)
-        {
-            var characterIdentifier = CMap.ConvertToCid(characterCode);
-
-            return CidFont.GetBoundingBox(characterIdentifier);
-        }
-
         public TransformationMatrix GetFontMatrix()
         {
             return CidFont.FontMatrix;
+        }
+
+        public double GetDescent()
+        {
+            return descent;
+        }
+
+        public double GetAscent()
+        {
+            return ascent;
         }
 
         public PdfVector GetPositionVector(int characterCode)
@@ -163,15 +195,19 @@
         }
 
         /// <inheritdoc/>
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
-            return CidFont.TryGetPath(characterCode, out path);
+            var characterIdentifier = CMap.ConvertToCid(characterCode);
+
+            return CidFont.TryGetPath(characterIdentifier, out path);
         }
 
         /// <inheritdoc/>
-        public bool TryGetNormalisedPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetNormalisedPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
-            return CidFont.TryGetNormalisedPath(characterCode, out path);
+            var characterIdentifier = CMap.ConvertToCid(characterCode);
+
+            return CidFont.TryGetNormalisedPath(characterIdentifier, out path);
         }
     }
 }

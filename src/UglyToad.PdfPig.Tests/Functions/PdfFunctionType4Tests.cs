@@ -1,14 +1,11 @@
 ﻿namespace UglyToad.PdfPig.Tests.Functions
 {
-    using System.Collections.Generic;
-    using System.Linq;
     using System.Text;
     using UglyToad.PdfPig.Functions;
     using UglyToad.PdfPig.Tests.Tokens;
     using UglyToad.PdfPig.Tokens;
     using UglyToad.PdfPig.Util;
-    using Xunit;
-
+ 
     public class PdfFunctionType4Tests
     {
         private static PdfFunctionType4 CreateFunction(string function, double[] domain, double[] range)
@@ -16,8 +13,8 @@
             DictionaryToken dictionaryToken = new DictionaryToken(new Dictionary<NameToken, IToken>()
             {
                 { NameToken.FunctionType, new NumericToken(4) },
-                { NameToken.Domain, new ArrayToken(domain.Select(v => new NumericToken((decimal)v)).ToArray()) },
-                { NameToken.Range, new ArrayToken(range.Select(v => new NumericToken((decimal)v)).ToArray()) },
+                { NameToken.Domain, new ArrayToken(domain.Select(v => new NumericToken(v)).ToArray()) },
+                { NameToken.Range, new ArrayToken(range.Select(v => new NumericToken(v)).ToArray()) },
             });
 
             var data = Encoding.ASCII.GetBytes(function); // OtherEncodings.Iso88591.GetBytes(function);

@@ -1,8 +1,10 @@
 ﻿namespace UglyToad.PdfPig.Images.Png
 {
+    using System.Buffers.Binary;
     using System.IO;
     using System.IO.Compression;
     using System.Text;
+    using UglyToad.PdfPig.Filters;
 
     /// <summary>
     /// Used to construct PNG images. Call <see cref="Create"/> to make a new builder.
@@ -80,7 +82,7 @@
         /// </summary>
         public void Save(Stream outputStream)
         {
-            outputStream.Write(HeaderValidationResult.ExpectedHeader, 0, HeaderValidationResult.ExpectedHeader.Length);
+            outputStream.Write(HeaderValidationResult.ExpectedHeader);
 
             var stream = new PngStreamWriteHelper(outputStream);
 
@@ -106,12 +108,12 @@
 
             var imageData = Compress(rawData);
             stream.WriteChunkLength(imageData.Length);
-            stream.WriteChunkHeader(Encoding.ASCII.GetBytes("IDAT"));
-            stream.Write(imageData, 0, imageData.Length);
+            stream.WriteChunkHeader("IDAT"u8);
+            stream.Write(imageData);
             stream.WriteCrc();
 
             stream.WriteChunkLength(0);
-            stream.WriteChunkHeader(Encoding.ASCII.GetBytes("IEND"));
+            stream.WriteChunkHeader("IEND"u8);
             stream.WriteCrc();
         }
 
@@ -121,9 +123,10 @@
             const int checksumLength = 4;
             using (var compressStream = new MemoryStream())
             using (var compressor = new DeflateStream(compressStream, CompressionLevel.Fastest, true))
+            using (var adlerStream = new Adler32ChecksumStream(compressor))
             {
-                compressor.Write(data, 0, data.Length);
-                compressor.Close();
+                adlerStream.Write(data, 0, data.Length);
+                adlerStream.Close();
 
                 compressStream.Seek(0, SeekOrigin.Begin);
 
@@ -143,15 +146,11 @@
                 }
 
                 // Write Checksum of raw data.
-                var checksum = Adler32Checksum.Calculate(data);
+                var checksum = adlerStream.Checksum;
 
                 var offset = headerLength + compressStream.Length;
 
-                result[offset++] = (byte)(checksum >> 24);
-                result[offset++] = (byte)(checksum >> 16);
-                result[offset++] = (byte)(checksum >> 8);
-                result[offset] = (byte)(checksum >> 0);
-
+                BinaryPrimitives.WriteUInt32BigEndian(result.AsSpan((int)offset, 4), checksum);
                 return result;
             }
         }

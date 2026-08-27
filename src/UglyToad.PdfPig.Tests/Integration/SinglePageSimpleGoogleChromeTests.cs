@@ -1,12 +1,7 @@
 ﻿// ReSharper disable AccessToDisposedClosure
 namespace UglyToad.PdfPig.Tests.Integration
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
     using Content;
-    using Xunit;
 
     public class SinglePageSimpleGoogleChromeTests
     {
@@ -188,6 +183,20 @@ namespace UglyToad.PdfPig.Tests.Integration
                     index++;
                 }
             }
+        }
+
+        [Fact]
+        public void HandleCorruptedFileOffsets()
+        {
+            var path = IntegrationHelpers.GetDocumentPath("Single Page Broken Offsets - from google drive.pdf");
+
+            using var doc = PdfDocument.Open(path);
+
+            var page = doc.GetPage(1);
+
+            var text = page.Text;
+
+            Assert.NotEmpty(text);
         }
 
         private static IReadOnlyList<AssertablePositionData> GetPdfBoxPositionData()

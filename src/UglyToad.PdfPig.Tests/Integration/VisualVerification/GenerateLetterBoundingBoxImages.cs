@@ -1,10 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Tests.Integration.VisualVerification
 {
     using PdfPig.Core;
-    using System;
-    using System.Drawing;
-    using System.IO;
-    using Xunit;
+    using SkiaSharp;
 
     public class GenerateLetterBoundingBoxImages
     {
@@ -24,6 +21,12 @@
         private const string MOZILLA_10372_2File = "MOZILLA-10372-2";
         private const string Type3FontZeroHeight = "type3-font-zero-height";
 
+        private const string OutputPath = "Images";
+
+        private static readonly SKPaint violetPen = new SKPaint() { Color = SKColors.BlueViolet, StrokeWidth = 1 };
+        private static readonly SKPaint redPen = new SKPaint() { Color = SKColors.Crimson, StrokeWidth = 1 };
+        private static readonly SKPaint bluePen = new SKPaint() { Color = SKColors.GreenYellow, StrokeWidth = 1 };
+        
         private static string GetFilename(string name)
         {
             var documentFolder = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Integration", "Documents"));
@@ -34,6 +37,25 @@
             }
 
             return Path.Combine(documentFolder, name);
+        }
+
+        [Fact]
+        public void GHOSTSCRIPT_695513_0()
+        {
+            Run("GHOSTSCRIPT-695513-0.pdf", 1024);
+        }
+
+        [Fact]
+        public void GHOSTSCRIPT_697234_0()
+        {
+            // Loose bbox are wrong, but pdf is broken
+            Run("GHOSTSCRIPT-697234-0.pdf", 1024);
+        }
+
+        [Fact]
+        public void test_a_5()
+        {
+            Run("test_a-5.pdf", 1024);
         }
 
         [Fact]
@@ -91,6 +113,18 @@
         }
 
         [Fact]
+        public void issues_1176()
+        {
+            Run("issues-1176.pdf", 543);
+        }
+
+        [Fact]
+        public void issues_1176_1()
+        {
+            Run("issues-1176-1.pdf", 1024);
+        }
+
+        [Fact]
         public void MotorInsuranceClaimForm()
         {
             Run(MotorInsuranceClaim, 841);
@@ -144,6 +178,13 @@
             Run(Type3FontZeroHeight, 1255);
         }
 
+        [Fact]
+        public void test_a()
+        {
+            // Rendered glyphs are not correct, but we use the grid to assess
+            Run("test_a", 1584, 1);
+        }
+
         private static void Run(string file, int imageHeight = 792, int pageNo = 1)
         {
             var pdfFileName = GetFilename(file);
@@ -155,12 +196,8 @@
 
                 double scale = imageHeight / page.Height;
 
-                var violetPen = new Pen(Color.BlueViolet, 1);
-                var redPen = new Pen(Color.Crimson, 1);
-                var bluePen = new Pen(Color.GreenYellow, 1);
-
-                using (var bitmap = new Bitmap(image))
-                using (var graphics = Graphics.FromImage(bitmap))
+                using (var bitmap = SKBitmap.FromImage(image))
+                using (var graphics = new SKCanvas(bitmap))
                 {
                     foreach (var word in page.GetWords())
                     {
@@ -169,54 +206,89 @@
 
                     foreach (var letter in page.Letters)
                     {
-                        DrawRectangle(letter.GlyphRectangle, graphics, violetPen, imageHeight, scale);
+                        DrawRectangle(letter.BoundingBox, graphics, violetPen, imageHeight, scale);
                     }
 
-                    foreach (var annotation in page.ExperimentalAccess.GetAnnotations())
+                    foreach (var annotation in page.GetAnnotations())
                     {
                         DrawRectangle(annotation.Rectangle, graphics, bluePen, imageHeight, scale);
                     }
 
+                    graphics.Flush();
+
                     var imageName = $"{file}.jpg";
 
-                    if (!Directory.Exists("Images"))
+                    if (!Directory.Exists(OutputPath))
                     {
-                        Directory.CreateDirectory("Images");
+                        Directory.CreateDirectory(OutputPath);
                     }
 
-                    var savePath = Path.Combine("Images", imageName);
+                    var savePath = Path.Combine(OutputPath, imageName);
 
-                    bitmap.Save(savePath);
+                    using (var fs = new FileStream(savePath, FileMode.Create))
+                    using (SKData d = bitmap.Encode(SKEncodedImageFormat.Jpeg, 100))
+                    {
+                        d.SaveTo(fs);
+                    }
+                }
+
+                using (var bitmap = SKBitmap.FromImage(image))
+                using (var graphics = new SKCanvas(bitmap))
+                {
+                    foreach (var letter in page.Letters)
+                    {
+                        DrawRectangle(letter.GlyphRectangleLoose, graphics, violetPen, imageHeight, scale);
+                    }
+
+                    graphics.Flush();
+
+                    var imageName = $"{file}_loose.jpg";
+
+                    if (!Directory.Exists(OutputPath))
+                    {
+                        Directory.CreateDirectory(OutputPath);
+                    }
+
+                    var savePath = Path.Combine(OutputPath, imageName);
+
+                    using (var fs = new FileStream(savePath, FileMode.Create))
+                    using (SKData d = bitmap.Encode(SKEncodedImageFormat.Jpeg, 100))
+                    {
+                        d.SaveTo(fs);
+                    }
                 }
             }
         }
 
-        private static void DrawRectangle(PdfRectangle rectangle, Graphics graphics, Pen pen,
-            int imageHeight, double scale)
+        private static void DrawRectangle(PdfRectangle rectangle, SKCanvas graphics, SKPaint pen, int imageHeight, double scale)
         {
             int GetY(PdfPoint p)
             {
                 return imageHeight - (int)(p.Y * scale);
             }
 
-            Point GetPoint(PdfPoint p)
+            SKPoint GetPoint(PdfPoint p)
             {
-                return new Point((int)(p.X * scale), GetY(p));
+                return new SKPoint((int)(p.X * scale), GetY(p));
             }
 
-            graphics.DrawLine(pen, GetPoint(rectangle.BottomLeft), GetPoint(rectangle.BottomRight));
-            graphics.DrawLine(pen, GetPoint(rectangle.BottomRight), GetPoint(rectangle.TopRight));
-            graphics.DrawLine(pen, GetPoint(rectangle.TopRight), GetPoint(rectangle.TopLeft));
-            graphics.DrawLine(pen, GetPoint(rectangle.TopLeft), GetPoint(rectangle.BottomLeft));
+            graphics.DrawLine(GetPoint(rectangle.BottomLeft), GetPoint(rectangle.BottomRight), pen);
+            graphics.DrawLine(GetPoint(rectangle.BottomRight), GetPoint(rectangle.TopRight), pen);
+            graphics.DrawLine(GetPoint(rectangle.TopRight), GetPoint(rectangle.TopLeft), pen);
+            graphics.DrawLine(GetPoint(rectangle.TopLeft), GetPoint(rectangle.BottomLeft), pen);
         }
 
-        private static Image GetCorrespondingImage(string filename)
+        private static SKImage GetCorrespondingImage(string filename)
         {
             var pdf = GetFilename(filename);
 
             pdf = pdf.Replace(".pdf", ".jpg");
 
-            return Image.FromFile(pdf);
+            if (File.Exists(pdf))
+            {
+                return SKImage.FromEncodedData(pdf);
+            }
+            return SKImage.FromEncodedData(pdf.Replace(".jpg", ".png"));
         }
     }
 }

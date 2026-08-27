@@ -1,12 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Filters;
-using UglyToad.PdfPig.Graphics.Operations.TextShowing;
-using UglyToad.PdfPig.Graphics.Operations;
 using UglyToad.PdfPig.Graphics;
+using UglyToad.PdfPig.Graphics.Operations;
+using UglyToad.PdfPig.Graphics.Operations.TextShowing;
 using UglyToad.PdfPig.Logging;
 using UglyToad.PdfPig.Parser;
 using UglyToad.PdfPig.Tokens;
@@ -16,12 +14,19 @@ namespace UglyToad.PdfPig.Writer
     /// <summary>
     /// Derived class of <see cref="TokenWriter"/> that does not write <see cref="ShowText"/> or <see cref="ShowTextsWithPositioning"/> operations in streams
     /// </summary>
-    internal class NoTextTokenWriter : TokenWriter
+    internal sealed class NoTextTokenWriter : TokenWriter
     {
+        private readonly IFilterProvider filterProvider;
+
         /// <summary>
         /// Set this value prior to processing page to get the right page number in log messages
         /// </summary>
         internal int Page { get; set; }
+
+        public NoTextTokenWriter(IFilterProvider filterProvider)
+        {
+            this.filterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
+        }
 
         /// <summary>
         /// Write stream without <see cref="ShowText"/> or <see cref="ShowTextsWithPositioning"/> operations
@@ -30,7 +35,7 @@ namespace UglyToad.PdfPig.Writer
         /// <param name="outputStream"></param>
         protected override void WriteStream(StreamToken streamToken, Stream outputStream)
         {
-            StreamToken outputStreamToken;
+            StreamToken? outputStreamToken;
             if (!WritingPageContents && !IsFormStream(streamToken))
             {
                 outputStreamToken = streamToken;
@@ -42,11 +47,11 @@ namespace UglyToad.PdfPig.Writer
 
             WriteDictionary(outputStreamToken.StreamDictionary, outputStream);
             WriteLineBreak(outputStream);
-            outputStream.Write(StreamStart, 0, StreamStart.Length);
+            outputStream.Write(StreamStart);
             WriteLineBreak(outputStream);
-            outputStream.Write(outputStreamToken.Data.ToArray(), 0, outputStreamToken.Data.Count);
+            outputStream.Write(outputStreamToken.Data.Span);
             WriteLineBreak(outputStream);
-            outputStream.Write(StreamEnd, 0, StreamEnd.Length);
+            outputStream.Write(StreamEnd);
         }
 
         private static bool IsFormStream(StreamToken streamToken)
@@ -62,10 +67,9 @@ namespace UglyToad.PdfPig.Writer
         /// <param name="outputStreamToken"></param>
         /// <returns>true if any text operation found (and we have a valid <paramref name="outputStreamToken"/> without the text operations),
         /// false if no text operation found (in which case <paramref name="outputStreamToken"/> is null)</returns>
-        private bool TryGetStreamWithoutText(StreamToken streamToken, out StreamToken outputStreamToken)
+        private bool TryGetStreamWithoutText(StreamToken streamToken, [NotNullWhen(true)] out StreamToken? outputStreamToken)
         {
-            var filterProvider = new FilterProviderWithLookup(DefaultFilterProvider.Instance);
-            IReadOnlyList<byte> bytes;
+            ReadOnlyMemory<byte> bytes;
             try
             {
                 bytes = streamToken.Decode(filterProvider);
@@ -76,11 +80,11 @@ namespace UglyToad.PdfPig.Writer
                 return false;
             }
 
-            var pageContentParser = new PageContentParser(new ReflectionGraphicsStateOperationFactory());
+            var pageContentParser = new PageContentParser(ReflectionGraphicsStateOperationFactory.Instance, StackDepthGuard.Infinite);
             IReadOnlyList<IGraphicsStateOperation> operations;
             try
             {
-                operations = pageContentParser.Parse(Page, new ByteArrayInputBytes(bytes), new NoOpLog());
+                operations = pageContentParser.Parse(Page, new MemoryInputBytes(bytes), new NoOpLog());
             }
             catch (Exception)
             {
@@ -109,7 +113,7 @@ namespace UglyToad.PdfPig.Writer
                 }
                 outputStreamT.Seek(0, SeekOrigin.Begin);
 
-                var compressedBytes = DataCompresser.CompressBytes(outputStreamT.ToArray());
+                var compressedBytes = DataCompressor.CompressBytes(outputStreamT.ToArray());
                 var outputStreamDictionary = new Dictionary<NameToken, IToken>()
                 {
                     { NameToken.Length, new NumericToken(compressedBytes.Length) },

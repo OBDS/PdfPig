@@ -1,12 +1,13 @@
 ﻿namespace UglyToad.PdfPig.Tests
 {
-    using System.Collections.Generic;
     using PdfPig.Filters;
     using PdfPig.Tokenization.Scanner;
     using PdfPig.Tokens;
 
     internal class TestFilterProvider : ILookupFilterProvider
     {
+        public static readonly TestFilterProvider Instance = new TestFilterProvider();
+
         public IReadOnlyList<IFilter> GetFilters(DictionaryToken dictionary)
         {
             return new List<IFilter>();

@@ -4,7 +4,6 @@
     using System.Collections.Generic;
     using Core;
     using Tokens;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// A node in the PDF document's page tree.
@@ -16,7 +15,6 @@
         /// <summary>
         /// The dictionary for this node in the page tree.
         /// </summary>
-        [NotNull]
         public DictionaryToken NodeDictionary { get; }
 
         /// <summary>
@@ -37,19 +35,17 @@
         /// <summary>
         /// The child nodes of this node if <see cref="IsPage"/> is <see langword="false" />
         /// </summary>
-        [NotNull]
-        public IReadOnlyList<PageTreeNode> Children { get; private set; }
+        public IReadOnlyList<PageTreeNode>? Children { get; private set; }
 
         /// <summary>
         /// The parent node of this node, unless it is the root node.
         /// </summary>
-        [CanBeNull]
-        public PageTreeNode Parent { get; private set; }
+        public PageTreeNode? Parent { get; private set; }
 
         /// <summary>
         /// Whether this node is the root node.
         /// </summary>
-        public bool IsRoot => Parent == null;
+        public bool IsRoot => Parent is null;
 
         /// <summary>
         /// Create a new <see cref="PageTreeNode"/>.
@@ -93,7 +89,7 @@
                 return $"Page #{PageNumber}: {NodeDictionary}.";
             }
 
-            return $"Pages ({Children.Count} children): {NodeDictionary}";
+            return $"Pages ({Children?.Count ?? 0} children): {NodeDictionary}";
         }
     }
 }

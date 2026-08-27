@@ -1,19 +1,19 @@
 ﻿namespace UglyToad.PdfPig.Graphics.Operations
 {
-    using System.Collections.Generic;
     using System.IO;
     using System.Linq;
 
-    /// <inheritdoc />
     /// <summary>
     /// Set the nonstroking color based on the current color space.
     /// </summary>
-    public class SetNonStrokeColor : IGraphicsStateOperation
+    public sealed class SetNonStrokeColor : IGraphicsStateOperation
     {
         /// <summary>
         /// The symbol for this operation in a stream.
         /// </summary>
         public const string Symbol = "sc";
+
+        private readonly double[] operands;
 
         /// <inheritdoc />
         public string Operator => Symbol;
@@ -21,21 +21,21 @@
         /// <summary>
         /// The values for the color, 1 for grayscale, 3 for RGB, 4 for CMYK.
         /// </summary>
-        public IReadOnlyList<decimal> Operands { get; }
+        public ReadOnlySpan<double> Operands => operands;
 
         /// <summary>
         /// Create a new <see cref="SetNonStrokeColor"/>.
         /// </summary>
         /// <param name="operands">The color operands.</param>
-        public SetNonStrokeColor(decimal[] operands)
+        public SetNonStrokeColor(double[] operands)
         {
-            Operands = operands;
+            this.operands = operands;
         }
 
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            operationContext.GetCurrentState().ColorSpaceContext.SetNonStrokingColor(Operands);
+            operationContext.GetCurrentState().ColorSpaceContext.SetNonStrokingColor(operands);
         }
 
         /// <inheritdoc />
@@ -43,7 +43,7 @@
         {
             foreach (var operand in Operands)
             {
-                stream.WriteDecimal(operand);
+                stream.WriteDouble(operand);
                 stream.WriteWhiteSpace();
             }
 
@@ -54,7 +54,7 @@
         /// <inheritdoc />
         public override string ToString()
         {
-            var arguments = string.Join(" ", Operands.Select(x => x.ToString("N")));
+            var arguments = string.Join(" ", operands.Select(x => x.ToString("N")));
             return $"{arguments} {Symbol}";
         }
     }

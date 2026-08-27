@@ -50,13 +50,13 @@
         /// Initializes the PDF stream with pdf header.
         /// </summary>
         /// <param name="version">Version of PDF.</param>
-        void InitializePdf(decimal version);
+        void InitializePdf(double version);
 
         /// <summary>
         /// Completes the PDF writing trailing PDF information.
         /// </summary>
         /// <param name="catalogReference">Indirect reference of catalog.</param>
         /// <param name="documentInformationReference">Reference to document information (optional)</param>
-        void CompletePdf(IndirectReferenceToken catalogReference, IndirectReferenceToken documentInformationReference=null);
+        void CompletePdf(IndirectReferenceToken catalogReference, IndirectReferenceToken? documentInformationReference = null);
     }
 }

@@ -2,7 +2,6 @@
 {
     using System.IO;
     using TextPositioning;
-    using Util.JetBrains.Annotations;
 
     /// <inheritdoc />
     /// <summary>
@@ -21,14 +20,12 @@
         /// <summary>
         /// The text to show as a <see cref="string"/>.
         /// </summary>
-        [CanBeNull]
-        public string Text { get; }
+        public string? Text { get; }
 
         /// <summary>
         /// The text to show as hex bytes.
         /// </summary>
-        [CanBeNull]
-        public byte[] Bytes { get; }
+        public ReadOnlyMemory<byte> Bytes { get; }
 
         /// <summary>
         /// Create a new <see cref="MoveToNextLineShowText"/>.
@@ -43,7 +40,7 @@
         /// Create a new <see cref="MoveToNextLineShowText"/>.
         /// </summary>
         /// <param name="hexBytes">The bytes of the text to show.</param>
-        public MoveToNextLineShowText(byte[] hexBytes)
+        public MoveToNextLineShowText(ReadOnlyMemory<byte> hexBytes)
         {
             Bytes = hexBytes;
         }
@@ -62,14 +59,14 @@
         /// <inheritdoc />
         public void Write(Stream stream)
         {
-            if (Bytes == null)
+            if (Bytes.IsEmpty)
             {
                 stream.WriteText($"({Text}) {Symbol}");
                 stream.WriteNewLine();
             }
             else
             {
-                stream.WriteHex(Bytes);
+                stream.WriteHex(Bytes.Span);
                 stream.WriteWhiteSpace();
                 stream.WriteText(Symbol);
                 stream.WriteNewLine();

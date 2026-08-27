@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using Core;
     using Fonts;
@@ -13,17 +14,20 @@
     /// <summary>
     /// Some TrueType fonts use both the Standard 14 descriptor and the TrueType font from disk.
     /// </summary>
-    internal class TrueTypeStandard14FallbackSimpleFont : IFont
+    internal sealed class TrueTypeStandard14FallbackSimpleFont : IFont
     {
         private static readonly TransformationMatrix DefaultTransformation =
             TransformationMatrix.FromValues(1 / 1000.0, 0, 0, 1 / 1000.0, 0, 0);
 
+        private readonly TransformationMatrix fontMatrix;
+        private readonly double ascent;
+        private readonly double descent;
         private readonly AdobeFontMetrics fontMetrics;
         private readonly Encoding encoding;
         private readonly TrueTypeFont font;
         private readonly MetricOverrides overrides;
 
-        public NameToken Name { get; }
+        public NameToken? Name { get; }
 
         public bool IsVertical { get; } = false;
 
@@ -37,19 +41,56 @@
             this.font = font;
             this.overrides = overrides;
             Name = name;
-            Details = fontMetrics == null ? FontDetails.GetDefault(Name?.Data) : new FontDetails(Name?.Data,
+            Details = fontMetrics is null ? FontDetails.GetDefault(Name?.Data) : new FontDetails(Name?.Data,
                 fontMetrics.Weight == "Bold",
                 fontMetrics.Weight == "Bold" ? 700 : FontDetails.DefaultWeight,
                 fontMetrics.ItalicAngle != 0);
+
+            // Assumption is ZapfDingbats is not possible here. We need to change the behaviour if not the case
+            System.Diagnostics.Debug.Assert(!(encoding is ZapfDingbatsEncoding || Details.Name.Contains("ZapfDingbats")));
+
+            // Set font matrix
+            if (this.font?.TableRegister.HeaderTable is not null)
+            {
+                var scale = (double)this.font.GetUnitsPerEm();
+                fontMatrix = TransformationMatrix.FromValues(1.0 / scale, 0, 0, 1.0 / scale, 0, 0);
+            }
+            else
+            {
+                fontMatrix = DefaultTransformation;
+            }
+
+            descent = ComputeDescent();
+            ascent = ComputeAscent();
         }
 
+        private double ComputeDescent()
+        {
+            if (fontMetrics is not null)
+            {
+                return GetFontMatrix().TransformY(fontMetrics.Descender);
+            }
+
+            return GetFontMatrix().TransformY(font.TableRegister.HorizontalHeaderTable.Descent);
+        }
+
+        private double ComputeAscent()
+        {
+            if (fontMetrics is not null)
+            {
+                return GetFontMatrix().TransformY(fontMetrics.Ascender);
+            }
+
+            return GetFontMatrix().TransformY(font.TableRegister.HorizontalHeaderTable.Ascent);
+        }
+        
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
         {
             codeLength = 1;
             return bytes.CurrentByte;
         }
 
-        public bool TryGetUnicode(int characterCode, out string value)
+        public bool TryGetUnicode(int characterCode, [NotNullWhen(true)] out string? value)
         {
             value = null;
 
@@ -123,21 +164,24 @@
 
         public TransformationMatrix GetFontMatrix()
         {
-            if (font?.TableRegister.HeaderTable != null)
-            {
-                var scale = (double)font.GetUnitsPerEm();
+            return fontMatrix;
+        }
 
-                return TransformationMatrix.FromValues(1 / scale, 0, 0, 1 / scale, 0, 0);
-            }
+        public double GetDescent()
+        {
+            return descent;
+        }
 
-            return DefaultTransformation;
+        public double GetAscent()
+        {
+            return ascent;
         }
 
         /// <inheritdoc/>
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
             path = null;
-            if (font == null)
+            if (font is null)
             {
                 return false;
             }
@@ -145,14 +189,14 @@
         }
 
         /// <inheritdoc/>
-        public bool TryGetNormalisedPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetNormalisedPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
             if (!TryGetPath(characterCode, out path))
             {
                 return false;
             }
 
-            path = GetFontMatrix().Transform(path).ToList();
+            path = GetFontMatrix().Transform(path).ToArray();
             return true;
         }
 
@@ -160,11 +204,11 @@
         {
             public int? FirstCharacterCode { get; }
 
-            public IReadOnlyList<double> Widths { get; }
+            public IReadOnlyList<double>? Widths { get; }
 
             public bool HasOverriddenMetrics { get; }
 
-            public MetricOverrides(int? firstCharacterCode, IReadOnlyList<double> widths)
+            public MetricOverrides(int? firstCharacterCode, IReadOnlyList<double>? widths)
             {
                 FirstCharacterCode = firstCharacterCode;
                 Widths = widths;
@@ -183,7 +227,7 @@
 
                 var index = characterCode - FirstCharacterCode.Value;
 
-                if (index < 0 || index >= Widths.Count)
+                if (index < 0 || index >= Widths!.Count)
                 {
                     return false;
                 }

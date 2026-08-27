@@ -1,11 +1,11 @@
 ﻿namespace UglyToad.PdfPig.Writer
 {
+    using Core;
+    using Graphics.Operations;
     using System;
     using System.Collections.Generic;
     using System.Globalization;
     using System.IO;
-    using Core;
-    using Graphics.Operations;
     using Tokens;
 
     /// <summary>
@@ -13,8 +13,8 @@
     /// </summary>
     internal class PdfStreamWriter : IPdfStreamWriter
     {
-        private readonly Action<decimal> recordVersion;
-        protected const decimal DefaultVersion = 1.2m;
+        private readonly Action<double>? recordVersion;
+        protected const double DefaultVersion = 1.2;
         protected Dictionary<IndirectReference, long> offsets = new Dictionary<IndirectReference, long>();
         protected bool DisposeStream { get; set; }
         protected bool Initialized { get; set; }
@@ -34,8 +34,8 @@
         internal PdfStreamWriter(
             Stream baseStream,
             bool disposeStream = true,
-            ITokenWriter tokenWriter = null,
-            Action<decimal> recordVersion = null)
+            ITokenWriter? tokenWriter = null,
+            Action<double>? recordVersion = null)
         {
             Stream = baseStream ?? throw new ArgumentNullException(nameof(baseStream));
 
@@ -58,7 +58,7 @@
 
             var ir = ReserveObjectNumber();
             offsets.Add(ir.Data, Stream.Position);
-            var obj = new ObjectToken(Stream.Position, ir.Data, token);
+            var obj = new ObjectToken(XrefLocation.File(Stream.Position), ir.Data, token);
             TokenWriter.WriteToken(obj, Stream);
             return ir;
         }
@@ -71,7 +71,7 @@
             }
 
             offsets.Add(indirectReference.Data, Stream.Position);
-            var obj = new ObjectToken(Stream.Position, indirectReference.Data, token);
+            var obj = new ObjectToken(XrefLocation.File(Stream.Position), indirectReference.Data, token);
             TokenWriter.WriteToken(obj, Stream);
             return indirectReference;
         }
@@ -81,31 +81,21 @@
             return new IndirectReferenceToken(new IndirectReference(CurrentNumber++, 0));
         }
 
-        public void InitializePdf(decimal version)
+        public void InitializePdf(double version)
         {
             recordVersion?.Invoke(version);
 
-            WriteString($"%PDF-{version.ToString("0.0", CultureInfo.InvariantCulture)}", Stream);
-
-            Stream.WriteText("%");
-            Stream.WriteByte(169);
-            Stream.WriteByte(205);
-            Stream.WriteByte(196);
-            Stream.WriteByte(210);
+            Stream.WriteText($"%PDF-{version.ToString("0.0", CultureInfo.InvariantCulture)}");
+            Stream.WriteNewLine();
+            Stream.WriteText("%"u8);
+            Stream.Write([169, 205, 196, 210]);
             Stream.WriteNewLine();
             Initialized = true;
         }
 
-        public void CompletePdf(IndirectReferenceToken catalogReference, IndirectReferenceToken documentInformationReference = null)
+        public void CompletePdf(IndirectReferenceToken catalogReference, IndirectReferenceToken? documentInformationReference = null)
         {
-            TokenWriter.WriteCrossReferenceTable(offsets, catalogReference.Data, Stream, documentInformationReference?.Data);
-        }
-
-        private static void WriteString(string text, Stream stream)
-        {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(text);
-            stream.Write(bytes, 0, bytes.Length);
-            stream.WriteNewLine();
+            TokenWriter.WriteCrossReferenceTable(offsets, catalogReference.Data, Stream, documentInformationReference?.Data, null);
         }
 
         public void Dispose()
@@ -115,7 +105,7 @@
                 Stream?.Dispose();
             }
             
-            Stream = null;
+            Stream = null!;
         }
     }
 }

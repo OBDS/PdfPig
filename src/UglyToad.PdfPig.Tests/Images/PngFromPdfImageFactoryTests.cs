@@ -1,10 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Tests.Images
 {
-    using System.Collections.Generic;
-    using System.Linq;
     using UglyToad.PdfPig.Graphics.Colors;
     using UglyToad.PdfPig.Images.Png;
-    using Xunit;
 
     public class PngFromPdfImageFactoryTests
     {
@@ -107,6 +104,30 @@
         }
 
         [Fact]
+        public void CanExtractPngFromPdfWithIndexedImageData8bpc()
+        {
+            var documetFolder = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Images", "Files"));
+
+            var pdfPath = Path.Combine(documetFolder, "Pdf",  "indexed-png-with-mask.pdf");
+
+            using (PdfDocument document = PdfDocument.Open(pdfPath))
+            {
+                var page = document.GetPage(1);
+
+                var img = page.GetImages().First();
+
+                var result = img.TryGetPng(out var bytes);
+
+                if (result)
+                {
+                    var outputPath = Path.Combine(documetFolder, "Pdf", "indexed-png-with-mask.png");
+
+                    File.WriteAllBytes(outputPath, bytes);
+                }
+            }
+        }
+
+        [Fact]
         public void CanGeneratePngFromIndexedImageData1bpc()
         {
             // Indices for a 3x3 RGB image, each index is represented by a single bit
@@ -151,11 +172,12 @@
             var decodedBytes = ImageHelpers.LoadFileBytes("ccittfax-decoded.bin");
             var image = new TestPdfImage
             {
-                ColorSpaceDetails = IndexedColorSpaceDetails.Stencil(DeviceGrayColorSpaceDetails.Instance, new[] { 1.0, 0 }),
+                ColorSpaceDetails = IndexedColorSpaceDetails.Stencil(DeviceGrayColorSpaceDetails.Instance),
                 DecodedBytes = decodedBytes,
                 WidthInSamples = 1800,
                 HeightInSamples = 3113,
-                BitsPerComponent = 1
+                BitsPerComponent = 1,
+                Decode = [1.0, 0]
             };
 
             Assert.True(PngFromPdfImageFactory.TryGenerate(image, out var bytes));
@@ -221,13 +243,13 @@
             var image = new TestPdfImage
             {
                 ColorSpaceDetails = new CalRGBColorSpaceDetails(
-                    whitePoint: new List<double> { 0.95043, 1, 1.09 },
+                    whitePoint: [0.95043, 1, 1.09],
                     blackPoint: null,
-                    gamma: new List<double> { 2.2, 2.2, 2.2 },
-                    matrix: new List<double> {
+                    gamma: [2.2, 2.2, 2.2],
+                    matrix: [
                         0.41239, 0.21264, 0.01933,
                         0.35758, 0.71517, 0.11919,
-                        0.18045, 0.07218, 0.9504 }),
+                        0.18045, 0.07218, 0.9504]),
                 DecodedBytes = decodedBytes,
                 WidthInSamples = 153,
                 HeightInSamples = 83,
@@ -245,7 +267,7 @@
             var image = new TestPdfImage
             {
                 ColorSpaceDetails = new CalGrayColorSpaceDetails(
-                    whitePoint: new List<double> { 0.9505000114, 1, 1.0889999866 },
+                    whitePoint: [0.9505000114, 1, 1.0889999866],
                     blackPoint: null,
                     gamma: 2.2000000477),
                 DecodedBytes = decodedBytes,

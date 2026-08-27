@@ -1,115 +1,124 @@
 ﻿namespace UglyToad.PdfPig.Filters
 {
     using System;
-    using System.Collections.Generic;
-    using System.IO;
+    using Core;
+    using System.Text;
     using Tokens;
 
-    /// <inheritdoc />
     /// <summary>
     /// ASCII 85 (Base85) is a binary to text encoding using 5 ASCII characters per 4 bytes of data.
     /// </summary>
-    internal class Ascii85Filter : IFilter
+    public sealed class Ascii85Filter : IFilter
     {
         private const byte EmptyBlock = (byte)'z';
         private const byte Offset = (byte)'!';
-        private const byte EmptyCharacterPadding = (byte) 'u';
+        private const byte EmptyCharacterPadding = (byte)'u';
 
-        private static readonly byte[] EndOfDataBytes = { (byte)'~', (byte)'>' };
+        private static ReadOnlySpan<byte> EndOfDataBytes => "~>"u8;
 
-        private static readonly int[] PowerByIndex = {
+        private static readonly int[] PowerByIndex =
+        [
             1,
             85,
             85 * 85,
             85 * 85 * 85,
-            85 * 85 * 85 *85
-        };
+            85 * 85 * 85 * 85
+        ];
 
         /// <inheritdoc />
         public bool IsSupported { get; } = true;
 
         /// <inheritdoc />
-        public byte[] Decode(IReadOnlyList<byte> input, DictionaryToken streamDictionary, int filterIndex)
+        public Memory<byte> Decode(Memory<byte> input, DictionaryToken streamDictionary, IFilterProvider filterProvider, int filterIndex)
         {
-            var asciiBuffer = new byte[5];
+            Span<byte> asciiBuffer = stackalloc byte[5];
+            Span<byte> inputSpan = input.Span;
 
             var index = 0;
 
-            using (var stream = new MemoryStream())
-            using (var writer = new BinaryWriter(stream))
+            using var writer = new ArrayPoolBufferWriter<byte>();
+
+            for (var i = 0; i < inputSpan.Length; i++)
             {
-                for (var i = 0; i < input.Count; i++)
+                var value = inputSpan[i];
+
+                if (IsWhiteSpace(value))
                 {
-                    var value = input[i];
+                    continue;
+                }
 
-                    if (IsWhiteSpace(value))
-                    {
-                        continue;
-                    }
-
-                    if (value == EndOfDataBytes[0])
-                    {
-                        if (i == input.Count - 1 || input[i + 1] == EndOfDataBytes[1])
-                        {
-                            if (index > 0)
-                            {
-                                WriteData(asciiBuffer, index, writer);
-                            }
-
-                            index = 0;
-
-                            // The end
-                            break;
-                        }
-
-                        // TODO: this shouldn't be possible?
-                    }
-
-                    if (value == EmptyBlock)
+                if (value == EndOfDataBytes[0])
+                {
+                    if (i == inputSpan.Length - 1 || inputSpan[i + 1] == EndOfDataBytes[1])
                     {
                         if (index > 0)
                         {
-                            throw new InvalidOperationException("Encountered z within a 5 character block");
-                        }
-
-                        for (int j = 0; j < 4; j++)
-                        {
-                            writer.Write((byte)0);
+                            WriteData(asciiBuffer, index, writer, true);
                         }
 
                         index = 0;
 
-                        // We've completed our block.
-                    }
-                    else
-                    {
-                        asciiBuffer[index] = (byte) (value - Offset);
-                        index++;
+                        // The end
+                        break;
                     }
 
-                    if (index == 5)
-                    {
-                        WriteData(asciiBuffer, index, writer);
-                        index = 0;
-                    }
+                    // TODO: this shouldn't be possible?
                 }
 
-                if (index > 0)
+                if (value == EmptyBlock)
                 {
-                    WriteData(asciiBuffer, index, writer);
+                    if (index > 0)
+                    {
+                        throw new InvalidOperationException("Encountered z within a 5 character block");
+                    }
+
+                    for (int j = 0; j < 4; j++)
+                    {
+                        writer.Write(0);
+                    }
+
+                    index = 0;
+
+                    // We've completed our block.
+                }
+                else
+                {
+                    asciiBuffer[index] = (byte)(value - Offset);
+                    index++;
                 }
 
-                writer.Flush();
-
-                return stream.ToArray();
+                if (index == 5)
+                {
+                    WriteData(asciiBuffer, index, writer, false);
+                    index = 0;
+                }
             }
+
+            if (index > 0)
+            {
+                WriteData(asciiBuffer, index, writer, true);
+            }
+
+            return writer.WrittenMemory.ToArray();
         }
 
-        private static void WriteData(byte[] ascii, int index, BinaryWriter writer)
+        private static void WriteData(
+            Span<byte> ascii,
+            int index,
+            ArrayPoolBufferWriter<byte> writer,
+            bool isAtEnd)
         {
             if (index < 2)
             {
-                throw new ArgumentOutOfRangeException(nameof(index), "Cannot convert a block padded by 4 'u' characters.");
+                if (isAtEnd)
+                {
+                    return;
+                }
+
+                var bufferTxt = Encoding.ASCII.GetString(ascii);
+                var soFar = Encoding.ASCII.GetString(writer.GetSpan());
+                throw new ArgumentOutOfRangeException(nameof(index),
+                    $"Cannot convert a this block because we're not at the end of the stream. Chunk: '{bufferTxt}'. Content: '{soFar}'");
             }
 
             // Write any empty padding if the block ended early.
@@ -117,7 +126,7 @@
             {
                 ascii[i] = EmptyCharacterPadding - Offset;
             }
-            
+
             int value = 0;
             value += ascii[0] * PowerByIndex[4];
             value += ascii[1] * PowerByIndex[3];
@@ -129,28 +138,23 @@
 
             if (index > 2)
             {
-                writer.Write((byte) (value >> 16));
+                writer.Write((byte)(value >> 16));
             }
 
             if (index > 3)
             {
-                writer.Write((byte) (value >> 8));
+                writer.Write((byte)(value >> 8));
             }
 
             if (index > 4)
             {
-                writer.Write((byte) value);
+                writer.Write((byte)value);
             }
         }
 
         private static bool IsWhiteSpace(byte b)
         {
-            if (b == '\r' || b == '\n' || b == ' ')
-            {
-                return true;
-            }
-
-            return false;
+            return b == '\r' || b == '\n' || b == ' ';
         }
     }
 }

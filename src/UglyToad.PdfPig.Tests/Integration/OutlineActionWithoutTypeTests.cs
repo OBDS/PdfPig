@@ -5,16 +5,12 @@ namespace UglyToad.PdfPig.Tests.Integration
     using Xunit;
 
     /// <summary>
-    /// Outline nodes in this document point at a /Link annotation instead of an action:
-    /// <code>
-    /// node   &lt;A, 3270 0&gt;, &lt;Title, (TITLE PAGE)&gt; ...
-    /// 3270 0 &lt;A, 3242 0&gt;, &lt;Subtype, /Link&gt;, &lt;Type, /Annot&gt; ...
-    /// 3242 0 &lt;A, 3242 0&gt;, &lt;Subtype, /Link&gt;, &lt;Type, /Annot&gt; ...   (references itself)
-    /// </code>
-    /// There is no action type (/S) to be found down that chain - the last hop points at itself -
-    /// so following it further is not an option. Throwing for the missing /S cost us the entire
-    /// outline of a 221 page document because of four bad nodes, so a missing action type is now
-    /// reported as "no action" and the node falls back to a bookmark without a destination.
+    /// This document's outline resolves correctly only when indirect objects held in object streams
+    /// are read by their recorded byte offsets. Reading them sequentially instead returned a
+    /// neighbouring object's content, so outline nodes appeared to point at /Link annotations
+    /// rather than actions, and destinations that did resolve landed on the wrong page: object
+    /// 3272 was read as 3251's content, putting "REVISION TRANSMITAL" on page 212 instead of 8.
+    /// Every node in this document has a real destination - none of them should fall back.
     /// </summary>
     public class OutlineActionWithoutTypeTests
     {
@@ -25,7 +21,7 @@ namespace UglyToad.PdfPig.Tests.Integration
         private static string GetPath() => IntegrationHelpers.GetSpecificTestDocumentPath("20251219 - N646AK MIP Rev 6.pdf");
 
         [Fact]
-        public void BookmarksAreReadDespiteActionsWithoutType()
+        public void BookmarksAreRead()
         {
             using (var document = PdfDocument.Open(GetPath(), new ParsingOptions { UseLenientParsing = false }))
             {
@@ -38,7 +34,7 @@ namespace UglyToad.PdfPig.Tests.Integration
         }
 
         [Fact]
-        public void OnlyTheMalformedNodesLoseTheirDestination()
+        public void EveryBookmarkResolvesToARealPage()
         {
             using (var document = PdfDocument.Open(GetPath(), new ParsingOptions { UseLenientParsing = false }))
             {
@@ -46,25 +42,29 @@ namespace UglyToad.PdfPig.Tests.Integration
 
                 var documentNodes = bookmarks.GetNodes().OfType<DocumentBookmarkNode>().ToList();
 
-                // The four nodes whose action cannot be resolved fall back to page 0, the rest of
-                // the outline still resolves to real pages.
-                Assert.Equal(4, documentNodes.Count(n => n.PageNumber == 0));
-                Assert.True(documentNodes.Count(n => n.PageNumber > 0) >= 40);
+                Assert.NotEmpty(documentNodes);
+                Assert.DoesNotContain(documentNodes, n => n.PageNumber <= 0);
+                Assert.DoesNotContain(documentNodes, n => n.PageNumber > document.NumberOfPages);
             }
         }
 
-        [Fact]
-        public void TitlesOfTheMalformedNodesAreStillAvailable()
+        [Theory]
+        [InlineData("TITLE PAGE", 7)]
+        [InlineData("REVISION TRANSMITAL", 8)]
+        [InlineData("REVISION RECORD", 9)]
+        [InlineData("REASON FOR REVISION", 10)]
+        [InlineData("TABLE OF CONTENTS", 12)]
+        public void FrontMatterBookmarksPointAtTheirOwnPages(string title, int expectedPageNumber)
         {
             using (var document = PdfDocument.Open(GetPath(), new ParsingOptions { UseLenientParsing = false }))
             {
                 Assert.True(document.TryGetBookmarks(out var bookmarks));
 
-                var titles = bookmarks.GetNodes().Select(n => n.Title).ToList();
+                var node = bookmarks.GetNodes()
+                    .OfType<DocumentBookmarkNode>()
+                    .Single(n => n.Title == title);
 
-                Assert.Contains("TITLE PAGE", titles);
-                Assert.Contains("REVISION RECORD", titles);
-                Assert.Contains("TABLE OF CONTENTS", titles);
+                Assert.Equal(expectedPageNumber, node.PageNumber);
             }
         }
     }

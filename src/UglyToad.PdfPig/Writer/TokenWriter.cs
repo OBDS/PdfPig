@@ -1,13 +1,15 @@
 ﻿namespace UglyToad.PdfPig.Writer
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Globalization;
-    using System.Text;
-    using System.IO;
-    using System.Linq;
     using Core;
     using Graphics.Operations;
+    using System;
+    using System.Buffers;
+    using System.Buffers.Text;
+    using System.Collections.Generic;
+    using System.Globalization;
+    using System.IO;
+    using System.Linq;
+    using System.Text;
     using Tokens;
     using Util;
 
@@ -16,58 +18,57 @@
     /// </summary>
     public class TokenWriter : ITokenWriter
     {
-        private static readonly byte ArrayStart = GetByte("[");
-        private static readonly byte ArrayEnd = GetByte("]");
+        private const byte ArrayStart = (byte)'[';
+        private const byte ArrayEnd = (byte)']';
 
-        private static readonly byte[] DictionaryStart = OtherEncodings.StringAsLatin1Bytes("<<");
-        private static readonly byte[] DictionaryEnd = OtherEncodings.StringAsLatin1Bytes(">>");
+        private static ReadOnlySpan<byte> DictionaryStart => "<<"u8;
+        private static ReadOnlySpan<byte> DictionaryEnd => ">>"u8;
 
-        private static readonly byte Comment = GetByte("%");
+        private const byte Comment = (byte)'%';
 
-        private static readonly byte[] Eof = OtherEncodings.StringAsLatin1Bytes("%%EOF");
+        private static ReadOnlySpan<byte> Eof => "%%EOF"u8;
 
-        private static readonly byte[] FalseBytes = OtherEncodings.StringAsLatin1Bytes("false");
+        private static ReadOnlySpan<byte> FalseBytes => "false"u8;
 
-        private static readonly byte HexStart = GetByte("<");
-        private static readonly byte HexEnd = GetByte(">");
+        private static readonly byte HexStart = (byte)'<';
+        private static readonly byte HexEnd = (byte)'>';
 
-        private static readonly byte InUseEntry = GetByte("n");
+        private const byte InUseEntry = (byte)'n';
 
-        private static readonly byte NameStart = GetByte("/");
+        private const byte NameStart = (byte)'/';
 
-        private static readonly byte[] Null = OtherEncodings.StringAsLatin1Bytes("null");
+        private static ReadOnlySpan<byte> Null => "null"u8;
 
-        private static readonly byte[] ObjStart = OtherEncodings.StringAsLatin1Bytes("obj");
-        private static readonly byte[] ObjEnd = OtherEncodings.StringAsLatin1Bytes("endobj");
+        private static ReadOnlySpan<byte> ObjStart => "obj"u8;
+        private static ReadOnlySpan<byte> ObjEnd => "endobj"u8;
 
-        private static readonly byte RByte = GetByte("R");
+        private const byte RByte = (byte)'R';
 
-        private static readonly byte[] StartXref = OtherEncodings.StringAsLatin1Bytes("startxref");
+        private static ReadOnlySpan<byte> StartXref => "startxref"u8;
 
         /// <summary>
         /// Bytes that indicate start of stream
         /// </summary>
-        protected static readonly byte[] StreamStart = OtherEncodings.StringAsLatin1Bytes("stream");
+        protected static ReadOnlySpan<byte> StreamStart => "stream"u8;
 
         /// <summary>
         /// Bytes that indicate end start of stream
         /// </summary>
-        protected static readonly byte[] StreamEnd = OtherEncodings.StringAsLatin1Bytes("endstream");
+        protected static ReadOnlySpan<byte> StreamEnd => "endstream"u8;
 
-        private static readonly byte StringStart = GetByte("(");
+        private const byte StringStart = (byte)'(';
 
-        private static readonly byte StringEnd = GetByte(")");
+        private const byte StringEnd = (byte)')';
 
-        private static readonly byte[] Trailer = OtherEncodings.StringAsLatin1Bytes("trailer");
+        private static ReadOnlySpan<byte> Trailer => "trailer"u8;
 
-        private static readonly byte[] TrueBytes = OtherEncodings.StringAsLatin1Bytes("true");
+        private static ReadOnlySpan<byte> TrueBytes => "true"u8;
 
-        private static readonly byte Whitespace = GetByte(" ");
+        private const byte Whitespace = (byte)' ';
 
-        private static readonly byte[] Xref = OtherEncodings.StringAsLatin1Bytes("xref");
+        private static ReadOnlySpan<byte> Xref => "xref"u8;
 
-        private static readonly HashSet<char> DelimiterChars = new HashSet<char>
-        {
+        private static readonly HashSet<char> DelimiterChars = [
             '(',
             ')',
             '<',
@@ -78,7 +79,7 @@
             '}',
             '/',
             '%'
-        };
+        ];
 
         /// <summary>
         /// Single global instance
@@ -92,10 +93,12 @@
         /// <param name="outputStream">The stream to write the token to.</param>
         public void WriteToken(IToken token, Stream outputStream)
         {
-            if (token == null)
+            if (token is null)
             {
-                throw new ArgumentNullException(nameof(token));
+                WriteNullToken(outputStream);
+                return;
             }
+
             switch (token)
             {
                 case ArrayToken array:
@@ -120,7 +123,7 @@
                     WriteName(name, outputStream);
                     break;
                 case NullToken _:
-                    outputStream.Write(Null, 0, Null.Length);
+                    outputStream.Write(Null);
                     WriteWhitespace(outputStream);
                     break;
                 case NumericToken number:
@@ -141,10 +144,12 @@
         }
 
         /// <inheritdoc cref="ITokenWriter.WriteCrossReferenceTable" />
-        public void WriteCrossReferenceTable(IReadOnlyDictionary<IndirectReference, long> objectOffsets,
+        public void WriteCrossReferenceTable(
+            IReadOnlyDictionary<IndirectReference, long> objectOffsets,
             IndirectReference catalogToken,
             Stream outputStream,
-            IndirectReference? documentInformationReference)
+            IndirectReference? documentInformationReference,
+            long? prevXrefTableLocation)
         {
             if (objectOffsets.Count == 0)
             {
@@ -153,7 +158,7 @@
 
             WriteLineBreak(outputStream);
             var position = outputStream.Position;
-            outputStream.Write(Xref, 0, Xref.Length);
+            outputStream.Write(Xref);
             WriteLineBreak(outputStream);
 
             var sets = new List<XrefSeries>();
@@ -162,7 +167,7 @@
 
             long firstObjectNumber = 0;
             long currentObjNum = 0;
-            var items = new List<XrefSeries.OffsetAndGeneration>
+            var items = new List<XrefSeries.OffsetAndGeneration?>
             {
                 // Zero entry
                 null
@@ -179,7 +184,7 @@
                 else
                 {
                     sets.Add(new XrefSeries(firstObjectNumber, items));
-                    items = new List<XrefSeries.OffsetAndGeneration>
+                    items = new List<XrefSeries.OffsetAndGeneration?>
                     {
                         new XrefSeries.OffsetAndGeneration(item.Value, item.Key.Generation)
                     };
@@ -216,13 +221,12 @@
                      * n is a literal keyword identifying this as an in-use entry
                      * eol is a 2-character end-of-line sequence ('\r\n' or ' \n')
                      */
-                        var paddedOffset = OtherEncodings.StringAsLatin1Bytes(offset.Offset.ToString("D10", CultureInfo.InvariantCulture));
-                        outputStream.Write(paddedOffset, 0, paddedOffset.Length);
+                        var paddedOffset = Encoding.ASCII.GetBytes(offset.Offset.ToString("D10", CultureInfo.InvariantCulture));
+                        outputStream.Write(paddedOffset);
+                        outputStream.WriteWhiteSpace();
 
-                        WriteWhitespace(outputStream);
-
-                        var generation = OtherEncodings.StringAsLatin1Bytes(offset.Generation.ToString("D5", CultureInfo.InvariantCulture));
-                        outputStream.Write(generation, 0, generation.Length);
+                        var generation = Encoding.ASCII.GetBytes(offset.Generation.ToString("D5", CultureInfo.InvariantCulture));
+                        outputStream.Write(generation);
 
                         WriteWhitespace(outputStream);
 
@@ -239,13 +243,13 @@
                 }
             }
 
-            outputStream.Write(Trailer, 0, Trailer.Length);
+            outputStream.Write(Trailer);
             WriteLineBreak(outputStream);
 
             var identifier = new ArrayToken(new IToken[]
             {
-                new HexToken(Guid.NewGuid().ToString("N").ToCharArray()),
-                new HexToken(Guid.NewGuid().ToString("N").ToCharArray())
+                new HexToken(Guid.NewGuid().ToString("N").AsSpan()),
+                new HexToken(Guid.NewGuid().ToString("N").AsSpan())
             });
 
             var trailerDictionaryData = new Dictionary<NameToken, IToken>
@@ -261,19 +265,24 @@
                 trailerDictionaryData[NameToken.Info] = new IndirectReferenceToken(documentInformationReference.Value);
             }
 
+            if (prevXrefTableLocation.HasValue)
+            {
+                trailerDictionaryData[NameToken.Prev] = new NumericToken(prevXrefTableLocation.Value);
+            }
+
             var trailerDictionary = new DictionaryToken(trailerDictionaryData);
 
             WriteDictionary(trailerDictionary, outputStream);
             WriteLineBreak(outputStream);
 
-            outputStream.Write(StartXref, 0, StartXref.Length);
+            outputStream.Write(StartXref);
             WriteLineBreak(outputStream);
 
             WriteLong(position, outputStream);
             WriteLineBreak(outputStream);
 
             // Complete!
-            outputStream.Write(Eof, 0, Eof.Length);
+            outputStream.Write(Eof);
         }
 
         /// <summary>
@@ -286,18 +295,18 @@
         public void WriteObject(long objectNumber, int generation, byte[] data, Stream outputStream)
         {
             WriteLong(objectNumber, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
             WriteInt(generation, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
-            outputStream.Write(ObjStart, 0, ObjStart.Length);
+            outputStream.Write(ObjStart);
             WriteLineBreak(outputStream);
 
             outputStream.Write(data, 0, data.Length);
 
             WriteLineBreak(outputStream);
-            outputStream.Write(ObjEnd, 0, ObjEnd.Length);
+            outputStream.Write(ObjEnd);
 
             WriteLineBreak(outputStream);
         }
@@ -305,8 +314,6 @@
         /// <summary>
         /// Write a hex value to the output stream
         /// </summary>
-        /// <param name="hex"></param>
-        /// <param name="stream"></param>
         protected void WriteHex(HexToken hex, Stream stream)
         {
             stream.WriteByte(HexStart);
@@ -317,12 +324,10 @@
         /// <summary>
         /// Write an array to the output stream, with whitespace at the end.
         /// </summary>
-        /// <param name="array"></param>
-        /// <param name="outputStream"></param>
         protected void WriteArray(ArrayToken array, Stream outputStream)
         {
             outputStream.WriteByte(ArrayStart);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
             for (var i = 0; i < array.Data.Count; i++)
             {
@@ -331,32 +336,36 @@
             }
 
             outputStream.WriteByte(ArrayEnd);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
         /// Write a boolean "true" or "false" to the output stream, with whitespace at the end.
         /// </summary>
-        /// <param name="boolean"></param>
-        /// <param name="outputStream"></param>
         protected void WriteBoolean(BooleanToken boolean, Stream outputStream)
         {
             var bytes = boolean.Data ? TrueBytes : FalseBytes;
-            outputStream.Write(bytes, 0, bytes.Length);
-            WriteWhitespace(outputStream);
+            outputStream.Write(bytes);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
         /// Write a "%comment" in the output stream, with a line break at the end.
         /// </summary>
-        /// <param name="comment"></param>
-        /// <param name="outputStream"></param>
         protected void WriteComment(CommentToken comment, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(comment.Data);
             outputStream.WriteByte(Comment);
-            outputStream.Write(bytes, 0, bytes.Length);
+            outputStream.WriteText(comment.Data);
             WriteLineBreak(outputStream);
+        }
+
+        /// <summary>
+        /// Write "null" in the output stream with a whitespace at the end.
+        /// </summary>
+        protected void WriteNullToken(Stream outputStream)
+        {
+            outputStream.Write("null"u8);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
@@ -366,14 +375,14 @@
         /// <param name="outputStream"></param>
         protected void WriteDictionary(DictionaryToken dictionary, Stream outputStream)
         {
-            outputStream.Write(DictionaryStart, 0, DictionaryStart.Length);
+            outputStream.Write(DictionaryStart);
 
             foreach (var pair in dictionary.Data)
             {
                 WriteName(pair.Key, outputStream);
 
                 // handle scenario where PdfPig has a null value under some circumstances
-                if (pair.Value == null)
+                if (pair.Value is null)
                 {
                     WriteToken(NullToken.Instance, outputStream);
                 }
@@ -383,7 +392,7 @@
                 }
             }
 
-            outputStream.Write(DictionaryEnd, 0, DictionaryEnd.Length);
+            outputStream.Write(DictionaryEnd);
         }
 
         /// <summary>
@@ -394,13 +403,13 @@
         protected virtual void WriteIndirectReference(IndirectReferenceToken reference, Stream outputStream)
         {
             WriteLong(reference.Data.ObjectNumber, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
             WriteInt(reference.Data.Generation, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
             outputStream.WriteByte(RByte);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
@@ -422,26 +431,28 @@
              * This is recommended for characters whose codes are outside the range 33 (!) to 126 (~).
              */
 
-            var sb = new StringBuilder();
+            using var sb = new ArrayPoolBufferWriter<byte>((name.Length * 2) + 1);
+
+            Span<byte> hexBuffer = stackalloc byte[2];
 
             foreach (var c in name)
             {
                 if (c < 33 || c > 126 || DelimiterChars.Contains(c))
                 {
-                    var str = Hex.GetString(new[] { (byte)c });
-                    sb.Append('#').Append(str);
+                    Hex.GetUtf8Chars([(byte)c], hexBuffer);
+
+                    sb.Write((byte)'#');
+                    sb.Write(hexBuffer);
                 }
                 else
                 {
-                    sb.Append(c);
+                    sb.Write((byte)c); // between 33 and 126 (ASCII is 0 - 128)
                 }
             }
 
-            var bytes = OtherEncodings.StringAsLatin1Bytes(sb.ToString());
-
             outputStream.WriteByte(NameStart);
-            outputStream.Write(bytes, 0, bytes.Length);
-            WriteWhitespace(outputStream);
+            outputStream.Write(sb.WrittenSpan);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
@@ -457,8 +468,7 @@
             }
             else
             {
-                var bytes = OtherEncodings.StringAsLatin1Bytes(number.Data.ToString("G", CultureInfo.InvariantCulture));
-                outputStream.Write(bytes, 0, bytes.Length);
+                outputStream.WriteDouble(number.Data);
             }
 
             WriteWhitespace(outputStream);
@@ -475,18 +485,18 @@
         protected virtual void WriteObject(ObjectToken objectToken, Stream outputStream)
         {
             WriteLong(objectToken.Number.ObjectNumber, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
             WriteInt(objectToken.Number.Generation, outputStream);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
 
-            outputStream.Write(ObjStart, 0, ObjStart.Length);
+            outputStream.Write(ObjStart);
             WriteLineBreak(outputStream);
 
             WriteToken(objectToken.Data, outputStream);
 
             WriteLineBreak(outputStream);
-            outputStream.Write(ObjEnd, 0, ObjEnd.Length);
+            outputStream.Write(ObjEnd);
 
             WriteLineBreak(outputStream);
         }
@@ -504,84 +514,84 @@
         {
             WriteDictionary(streamToken.StreamDictionary, outputStream);
             WriteLineBreak(outputStream);
-            outputStream.Write(StreamStart, 0, StreamStart.Length);
+            outputStream.Write(StreamStart);
             WriteLineBreak(outputStream);
-            outputStream.Write(streamToken.Data.ToArray(), 0, streamToken.Data.Count);
+            outputStream.Write(streamToken.Data.Span);
             WriteLineBreak(outputStream);
-            outputStream.Write(StreamEnd, 0, StreamEnd.Length);
+            outputStream.Write(StreamEnd);
         }
 
-        private static readonly int[] EscapeNeeded = new int[]
-        {
+        private static readonly int[] EscapeNeeded =
+        [
             '\r', '\n', '\t', '\b', '\f', '\\'
-        };
+        ];
 
-        private static readonly int[] Escaped = new int[]
-        {
+        private static readonly int[] Escaped =
+        [
             'r', 'n', 't', 'b', 'f', '\\'
-        };
+        ];
 
         /// <summary>
         /// Write string to the stream, with whitespace at the end
         /// </summary>
-        /// <param name="stringToken"></param>
-        /// <param name="outputStream"></param>
         protected virtual void WriteString(StringToken stringToken, Stream outputStream)
         {
             outputStream.WriteByte(StringStart);
 
-            if (stringToken.EncodedWith == StringToken.Encoding.Iso88591)
+            if (stringToken.EncodedWith == StringToken.Encoding.Iso88591 || stringToken.EncodedWith == StringToken.Encoding.PdfDocEncoding)
             {
                 // iso 88591 (or really PdfDocEncoding in non-contentstream circumstances shouldn't
                 // have these chars but seems like internally this isn't obeyed (see:
                 // CanCreateDocumentInformationDictionaryWithNonAsciiCharacters test) and it may
                 // happen during parsing as well -> switch to unicode
-                if (stringToken.Data.Any(x => x > 255))
+
+                var data = stringToken.Data.ToCharArray();
+                if (data.Any(x => x > 255))
                 {
-                    var data = new StringToken(stringToken.Data, StringToken.Encoding.Utf16BE).GetBytes();
-                    outputStream.Write(data, 0, data.Length);
+                    data = new StringToken(stringToken.Data, StringToken.Encoding.Utf16BE)
+                        .GetBytes()
+                        .Select(b => (char)b)
+                        .ToArray();
                 }
-                else
+
+                int ei;
+                for (var i = 0; i < data.Length; i++)
                 {
-                    int ei;
-                    for (var i = 0; i < stringToken.Data.Length; i++)
+                    var c = (int)data[i];
+                    if (c == (int)'(' || c == (int)')') // wastes a little space if escaping not needed but better than forward searching
                     {
-                        var c = (int)stringToken.Data[i];
-                        if (c == (int)'(' || c == (int)')') // wastes a little space if escaping not needed but better than forward searching
-                        {
-                            outputStream.WriteByte((byte)'\\');
-                            outputStream.WriteByte((byte)c);
-                        }
-                        else if ((ei = Array.IndexOf(EscapeNeeded, c)) > -1)
-                        {
-                            outputStream.WriteByte((byte)'\\');
-                            outputStream.WriteByte((byte)Escaped[ei]);
-                        }
-                        else if (c < 32 || c > 126) // non printable
-                        {
-                            var b3 = c / 64;
-                            var b2 = (c - b3 * 64) / 8;
-                            var b1 = c % 8;
-                            outputStream.WriteByte((byte)'\\');
-                            outputStream.WriteByte((byte)(b3 + '0'));
-                            outputStream.WriteByte((byte)(b2 + '0'));
-                            outputStream.WriteByte((byte)(b1 + '0'));
-                        }
-                        else
-                        {
-                            outputStream.WriteByte((byte)c);
-                        }
+                        outputStream.WriteByte((byte)'\\');
+                        outputStream.WriteByte((byte)c);
+                    }
+                    else if ((ei = Array.IndexOf(EscapeNeeded, c)) > -1)
+                    {
+                        outputStream.WriteByte((byte)'\\');
+                        outputStream.WriteByte((byte)Escaped[ei]);
+                    }
+                    else if (c < 32 || c > 126) // non printable
+                    {
+                        var b3 = c / 64;
+                        var b2 = (c - b3 * 64) / 8;
+                        var b1 = c % 8;
+                        outputStream.WriteByte((byte)'\\');
+                        outputStream.WriteByte((byte)(b3 + '0'));
+                        outputStream.WriteByte((byte)(b2 + '0'));
+                        outputStream.WriteByte((byte)(b1 + '0'));
+                    }
+                    else
+                    {
+                        outputStream.WriteByte((byte)c);
                     }
                 }
             }
             else
             {
                 var bytes = stringToken.GetBytes();
-                outputStream.Write(bytes, 0, bytes.Length);
+                outputStream.Write(bytes);
             }
 
             outputStream.WriteByte(StringEnd);
-            WriteWhitespace(outputStream);
+            outputStream.WriteWhiteSpace();
         }
 
         /// <summary>
@@ -591,8 +601,9 @@
         /// <param name="outputStream"></param>
         protected virtual void WriteInt(int value, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G", CultureInfo.InvariantCulture));
-            outputStream.Write(bytes, 0, bytes.Length);
+            Span<byte> buffer = stackalloc byte[10]; // max 10
+            Utf8Formatter.TryFormat(value, buffer, out int byteWritten);
+            outputStream.Write(buffer.Slice(0, byteWritten));
         }
 
         /// <summary>
@@ -611,8 +622,9 @@
         /// <param name="outputStream"></param>
         protected virtual void WriteLong(long value, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G", CultureInfo.InvariantCulture));
-            outputStream.Write(bytes, 0, bytes.Length);
+            Span<byte> buffer = stackalloc byte[20]; // max 20
+            Utf8Formatter.TryFormat(value, buffer, out int byteWritten);
+            outputStream.Write(buffer.Slice(0, byteWritten));
         }
 
         /// <summary>
@@ -633,32 +645,20 @@
 
             outputStream.WriteText(new string('0', 10));
             outputStream.WriteWhiteSpace();
-            outputStream.WriteText("65535");
+            outputStream.WriteText("65535"u8);
             outputStream.WriteWhiteSpace();
-            outputStream.WriteText("f");
+            outputStream.WriteText("f"u8);
             outputStream.WriteWhiteSpace();
             outputStream.WriteNewLine();
-        }
-
-        private static byte GetByte(string value)
-        {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(value);
-
-            if (bytes.Length > 1)
-            {
-                throw new InvalidOperationException();
-            }
-
-            return bytes[0];
         }
 
         private class XrefSeries
         {
             public long First { get; }
 
-            public IReadOnlyList<OffsetAndGeneration> Offsets { get; }
+            public IReadOnlyList<OffsetAndGeneration?> Offsets { get; }
 
-            public XrefSeries(long first, IReadOnlyList<OffsetAndGeneration> offsets)
+            public XrefSeries(long first, IReadOnlyList<OffsetAndGeneration?> offsets)
             {
                 First = first;
                 Offsets = offsets;

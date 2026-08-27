@@ -13,11 +13,11 @@
         private static readonly CommentTokenizer CommentTokenizer = new CommentTokenizer();
         private static readonly HexTokenizer HexTokenizer = new HexTokenizer();
         private static readonly NameTokenizer NameTokenizer = new NameTokenizer();
+        private static readonly PlainTokenizer PlainTokenizer = new PlainTokenizer();
+        private static readonly PlainTokenizer PlainTokenizerSplitOnDigit = new PlainTokenizer(splitOnDigit: true);
+        private static readonly NumericTokenizer NumericTokenizer = new NumericTokenizer();
 
-        // NOTE: these are not thread safe so should not be static. Each instance includes a
-        // StringBuilder it re-uses.
-        private readonly PlainTokenizer PlainTokenizer = new PlainTokenizer();
-        private readonly NumericTokenizer NumericTokenizer = new NumericTokenizer();
+        private readonly PlainTokenizer plainTokenizer;
         private readonly StringTokenizer stringTokenizer;
         private readonly ArrayTokenizer arrayTokenizer;
         private readonly DictionaryTokenizer dictionaryTokenizer;
@@ -27,7 +27,8 @@
         private readonly IInputBytes inputBytes;
         private readonly bool usePdfDocEncoding;
         private readonly List<(byte firstByte, ITokenizer tokenizer)> customTokenizers = new List<(byte, ITokenizer)>();
-        
+        private readonly bool useLenientParsing;
+
         /// <summary>
         /// The offset in the input data at which the <see cref="CurrentToken"/> starts.
         /// </summary>
@@ -44,6 +45,17 @@
 
         private bool hasBytePreRead;
         private bool isInInlineImage;
+        /// <summary>
+        /// '%' only identifies comments outside of PDF streams and strings, inside these we should ignore it.
+        /// </summary>
+        /// <remarks>
+        /// PDFBox skips all of a line following a comment character inside streams, see:
+        /// https://github.com/apache/pdfbox/blob/0e1c42dace1c3a2631d5309f662de5628b80fda6/pdfbox/src/main/java/org/apache/pdfbox/pdfparser/BaseParser.java#L1319
+        /// </remarks>
+        private readonly bool isStream;
+
+        /// <inheritdoc/>
+        public StackDepthGuard StackDepthGuard { get; }
 
         /// <summary>
         /// Create a new <see cref="CoreTokenScanner"/> from the input.
@@ -51,16 +63,24 @@
         public CoreTokenScanner(
             IInputBytes inputBytes,
             bool usePdfDocEncoding,
+            StackDepthGuard stackDepthGuard,
             ScannerScope scope = ScannerScope.None,
-            IReadOnlyDictionary<NameToken, IReadOnlyList<NameToken>> namedDictionaryRequiredKeys = null)
+            IReadOnlyDictionary<NameToken, IReadOnlyList<NameToken>> namedDictionaryRequiredKeys = null,
+            bool useLenientParsing = false,
+            bool isStream = false,
+            bool isCMapParser = false)
         {
             this.inputBytes = inputBytes ?? throw new ArgumentNullException(nameof(inputBytes));
             this.usePdfDocEncoding = usePdfDocEncoding;
+            this.StackDepthGuard = stackDepthGuard;
+            this.plainTokenizer = isCMapParser ? PlainTokenizerSplitOnDigit : PlainTokenizer;
             this.stringTokenizer = new StringTokenizer(usePdfDocEncoding);
-            this.arrayTokenizer = new ArrayTokenizer(usePdfDocEncoding);
-            this.dictionaryTokenizer = new DictionaryTokenizer(usePdfDocEncoding);
+            this.arrayTokenizer = new ArrayTokenizer(usePdfDocEncoding, this.StackDepthGuard, useLenientParsing);
+            this.dictionaryTokenizer = new DictionaryTokenizer(usePdfDocEncoding, this.StackDepthGuard, useLenientParsing: useLenientParsing);
             this.scope = scope;
             this.namedDictionaryRequiredKeys = namedDictionaryRequiredKeys;
+            this.useLenientParsing = useLenientParsing;
+            this.isStream = isStream;
         }
 
         /// <inheritdoc />
@@ -88,17 +108,53 @@
             inputBytes.Seek(position);
         }
 
+        /// <summary>
+        /// Discards any byte that was read ahead of the current token (see <see cref="ITokenizer.ReadsNextByte"/>).
+        /// This must be called after seeking to an absolute position where the next <see cref="MoveNext"/> is
+        /// expected to read the byte at that position, otherwise the stale pre-read byte from the previous
+        /// location is reused and tokenization starts one byte too late.
+        /// </summary>
+        public void ClearPreReadByte()
+        {
+            hasBytePreRead = false;
+        }
+
         /// <inheritdoc />
         public bool MoveNext()
         {
+            StackDepthGuard.Enter();
+            try
+            {
+                return MoveNextInternal();
+            }
+            finally
+            {
+                StackDepthGuard.Exit();
+            }
+        }
+
+        private bool MoveNextInternal()
+        {
             var endAngleBracesRead = 0;
 
+            bool isSkippingLine = false;
             bool isSkippingSymbol = false;
             while ((hasBytePreRead && !inputBytes.IsAtEnd()) || inputBytes.MoveNext())
             {
                 hasBytePreRead = false;
                 var currentByte = inputBytes.CurrentByte;
                 var c = (char) currentByte;
+
+                if (isSkippingLine)
+                {
+                    if (ReadHelper.IsEndOfLine(c))
+                    {
+                        isSkippingLine = false;
+                        continue;
+                    }
+
+                    continue;
+                }
 
                 ITokenizer tokenizer = null;
                 foreach (var customTokenizer in customTokenizers)
@@ -112,9 +168,15 @@
 
                 if (tokenizer == null)
                 {
-                    if (ReadHelper.IsWhitespace(currentByte))
+                    if (ReadHelper.IsWhitespace(currentByte) || char.IsControl(c))
                     {
                         isSkippingSymbol = false;
+                        continue;
+                    }
+
+                    if (currentByte == (byte)'%' && isStream)
+                    {
+                        isSkippingLine = true;
                         continue;
                     }
 
@@ -140,7 +202,7 @@
                                     && CurrentToken is NameToken name
                                     && namedDictionaryRequiredKeys.TryGetValue(name, out var requiredKeys))
                                 {
-                                    tokenizer = new DictionaryTokenizer(usePdfDocEncoding, requiredKeys);
+                                    tokenizer = new DictionaryTokenizer(usePdfDocEncoding, StackDepthGuard, requiredKeys, useLenientParsing);
                                 }
                             }
                             else
@@ -182,7 +244,7 @@
                             tokenizer = NumericTokenizer;
                             break;
                         default:
-                            tokenizer = PlainTokenizer;
+                            tokenizer = plainTokenizer;
                             break;
                     }
                 }
@@ -207,7 +269,7 @@
                         // Special case handling for inline images.
                         var imageData = ReadInlineImageData();
                         isInInlineImage = false;
-                        CurrentToken = new InlineImageDataToken(imageData);
+                        CurrentToken = new InlineImageDataToken(new Memory<byte>([..imageData]));
                         hasBytePreRead = false;
                         return true;
                     }
@@ -284,7 +346,7 @@
             return data;
         }
 
-        private IReadOnlyList<byte> ReadInlineImageData()
+        private List<byte> ReadInlineImageData()
         {
             // The ID operator should be followed by a single white-space character, and the next character is interpreted
             // as the first byte of image data. 
@@ -302,17 +364,22 @@
         {
             const byte lastPlainText = 127;
             const byte space = 32;
-
+            Span<byte> buffer = stackalloc byte[6];
 
             var imageData = new List<byte>();
             byte prevByte = 0;
             while (inputBytes.MoveNext())
             {
-                if (inputBytes.CurrentByte == 'I' && prevByte == 'E')
-                {
-                    // Check for EI appearing in binary data.
-                    var buffer = new byte[6];
+                var currentByte = inputBytes.CurrentByte;
 
+                // The EI operator that terminates an inline image data must be delimited by white-space
+                // (ISO 32000-2, 8.9.7), i.e. rejects the many "EI" byte pairs that occur naturally inside
+                // binary or ASCII-encoded (e.g. ASCII85) image data.
+                if (currentByte == 'I' && prevByte == 'E' &&
+                    imageData.Count >= 2 && ReadHelper.IsWhitespace(imageData[imageData.Count - 2]))
+                {
+                    // Confirm "EI" really ends the image rather than appearing within the data by
+                    // checking the following bytes look like content (plain text including white-space).
                     var currentOffset = inputBytes.CurrentOffset;
 
                     var read = inputBytes.Read(buffer);
@@ -360,9 +427,17 @@
                     }
                 }
 
-                imageData.Add(inputBytes.CurrentByte);
+                imageData.Add(currentByte);
 
-                prevByte = inputBytes.CurrentByte;
+                prevByte = currentByte;
+            }
+
+            if (useLenientParsing)
+            {
+                // Other parsers just treat end-of-file as a valid end-image. Though the image file will be messed up
+                // and invalid, and we may miss genuine page content, all tests parsers seem to work this way for file 0007511
+                // in the test corpus.
+                return imageData;
             }
 
             throw new PdfDocumentFormatException($"No end of inline image data (EI) was found for image data at position {startsAt}.");

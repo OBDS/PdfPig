@@ -2,13 +2,13 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Content;
     using Core;
     using Graphics.Colors;
     using Graphics.Core;
     using Images.Png;
     using Tokens;
-    using Util.JetBrains.Annotations;
 
     /// <inheritdoc />
     /// <summary>
@@ -16,11 +16,15 @@
     /// </summary>
     public class XObjectImage : IPdfImage
     {
-        [CanBeNull]
-        private readonly Lazy<IReadOnlyList<byte>> bytesFactory;
+        private readonly Lazy<Memory<byte>>? memoryFactory;
 
         /// <inheritdoc />
-        public PdfRectangle Bounds { get; }
+        public PdfRectangle BoundingBox { get; }
+
+        /// <inheritdoc />
+
+        [Obsolete("Use BoundingBox instead.")]
+        public PdfRectangle Bounds => BoundingBox;
 
         /// <inheritdoc />
         public int WidthInSamples { get; }
@@ -45,7 +49,7 @@
         public bool IsImageMask { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<decimal> Decode { get; }
+        public IReadOnlyList<double> Decode { get; }
 
         /// <inheritdoc />
         public bool Interpolate { get; }
@@ -54,14 +58,19 @@
         public bool IsInlineImage { get; } = false;
 
         /// <inheritdoc />
-        [NotNull]
         public DictionaryToken ImageDictionary { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<byte> RawBytes { get; }
+        public Memory<byte> RawMemory { get; }
 
         /// <inheritdoc />
-        public ColorSpaceDetails ColorSpaceDetails { get; }
+        public Span<byte> RawBytes => RawMemory.Span;
+
+        /// <inheritdoc />
+        public ColorSpaceDetails? ColorSpaceDetails { get; }
+
+        /// <inheritdoc />
+        public IPdfImage? MaskImage { get; }
 
         /// <summary>
         /// Creates a new <see cref="XObjectImage"/>.
@@ -74,13 +83,14 @@
             bool isImageMask,
             RenderingIntent renderingIntent,
             bool interpolate,
-            IReadOnlyList<decimal> decode,
+            IReadOnlyList<double> decode,
             DictionaryToken imageDictionary,
-            IReadOnlyList<byte> rawBytes,
-            Lazy<IReadOnlyList<byte>> bytes,
-            ColorSpaceDetails colorSpaceDetails)
+            Memory<byte> rawMemory,
+            Lazy<Memory<byte>>? bytes,
+            ColorSpaceDetails? colorSpaceDetails,
+            IPdfImage? softMaskImage)
         {
-            Bounds = bounds;
+            BoundingBox = bounds;
             WidthInSamples = widthInSamples;
             HeightInSamples = heightInSamples;
             BitsPerComponent = bitsPerComponent;
@@ -90,32 +100,33 @@
             Interpolate = interpolate;
             Decode = decode;
             ImageDictionary = imageDictionary ?? throw new ArgumentNullException(nameof(imageDictionary));
-            RawBytes = rawBytes;
+            RawMemory = rawMemory;
             ColorSpaceDetails = colorSpaceDetails;
-            bytesFactory = bytes;
+            memoryFactory = bytes;
+            MaskImage = softMaskImage;
         }
 
         /// <inheritdoc />
-        public bool TryGetBytes(out IReadOnlyList<byte> bytes)
+        public bool TryGetBytesAsMemory(out Memory<byte> bytes)
         {
             bytes = null;
-            if (bytesFactory == null)
+            if (memoryFactory is null)
             {
                 return false;
             }
 
-            bytes = bytesFactory.Value;
+            bytes = memoryFactory.Value;
 
             return true;
         }
 
         /// <inheritdoc />
-        public bool TryGetPng(out byte[] bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
+        public bool TryGetPng([NotNullWhen(true)] out byte[]? bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
 
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"XObject Image (w {Bounds.Width}, h {Bounds.Height}): {ImageDictionary}";
+            return $"XObject Image (w {BoundingBox.Width}, h {BoundingBox.Height}): {ImageDictionary}";
         }
     }
 }

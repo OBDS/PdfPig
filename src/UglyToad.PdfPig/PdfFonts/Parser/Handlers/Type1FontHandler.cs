@@ -19,13 +19,24 @@
         private readonly IPdfTokenScanner pdfScanner;
         private readonly ILookupFilterProvider filterProvider;
         private readonly IEncodingReader encodingReader;
+        private readonly CMapLocalCache cmapLocalCache;
+        private readonly bool isLenientParsing;
+        private readonly StackDepthGuard stackDepthGuard;
 
-        public Type1FontHandler(IPdfTokenScanner pdfScanner, ILookupFilterProvider filterProvider,
-            IEncodingReader encodingReader)
+        public Type1FontHandler(
+            IPdfTokenScanner pdfScanner,
+            ILookupFilterProvider filterProvider,
+            IEncodingReader encodingReader,
+            CMapLocalCache cmapLocalCache,
+            StackDepthGuard stackDepthGuard,
+            bool isLenientParsing)
         {
             this.pdfScanner = pdfScanner;
             this.filterProvider = filterProvider;
             this.encodingReader = encodingReader;
+            this.cmapLocalCache = cmapLocalCache;
+            this.isLenientParsing = isLenientParsing;
+            this.stackDepthGuard = stackDepthGuard;
         }
 
         public IFont Generate(DictionaryToken dictionary)
@@ -65,15 +76,29 @@
             {
                 firstCharacter = 0;
                 lastCharacter = 0;
-                widths = EmptyArray<double>.Instance;
+                widths = [];
             }
 
-            if (!dictionary.TryGet(NameToken.FontDescriptor, out var _))
+            if (!dictionary.TryGet(NameToken.FontDescriptor, out _))
             {
-                if (dictionary.TryGet(NameToken.BaseFont, out var baseFontToken) &&
-                    DirectObjectFinder.TryGet(baseFontToken, pdfScanner, out NameToken baseFontName))
+                if (dictionary.TryGet(NameToken.BaseFont, pdfScanner, out NameToken? baseFontToken))
                 {
-                    var metrics = Standard14.GetAdobeFontMetrics(baseFontName.Data);
+                    var metrics = Standard14.GetAdobeFontMetrics(baseFontToken.Data);
+
+                    if (metrics is null)
+                    {
+                        if (isLenientParsing)
+                        {
+                            // We can support a fallback here to return content.
+                            // https://github.com/apache/pdfbox/blob/f81c7c5a06126db68aa985a0e755cdbffed7d270/pdfbox/src/main/java/org/apache/pdfbox/pdmodel/font/FontMapperImpl.java#L304
+                            metrics = Standard14.GetAdobeFontMetrics(Standard14Font.TimesRoman);
+                        }
+                        else
+                        {
+                            throw new PdfDocumentFormatException(
+                                $"Type 1 Standard 14 font with name {baseFontToken} requested, this is an invalid name.");
+                        }
+                    }
 
                     var overrideEncoding = encodingReader.Read(dictionary);
 
@@ -87,26 +112,20 @@
 
             var name = FontDictionaryAccessHelper.GetName(pdfScanner, dictionary, descriptor);
 
-            CMap toUnicodeCMap = null;
+            CMap? toUnicodeCMap = null;
             if (dictionary.TryGet(NameToken.ToUnicode, out var toUnicodeObj))
             {
                 var toUnicode = DirectObjectFinder.Get<StreamToken>(toUnicodeObj, pdfScanner);
 
-                var decodedUnicodeCMap = toUnicode?.Decode(filterProvider, pdfScanner);
-
-                if (decodedUnicodeCMap != null)
-                {
-                    toUnicodeCMap = CMapCache.Parse(new ByteArrayInputBytes(decodedUnicodeCMap));
-                }
+                cmapLocalCache.TryGet(toUnicode, out toUnicodeCMap);
             }
-
 
             var fromFont = default(Encoding);
             if (font != null)
             {
                 if (font.TryGetFirst(out var t1Font))
                 {
-                    fromFont = t1Font.Encoding != null ? new BuiltInEncoding(t1Font.Encoding) : default(Encoding);
+                    fromFont = (t1Font.Encoding is not null && t1Font.Encoding.Count > 0) ? new BuiltInEncoding(t1Font.Encoding) : default(Encoding);
                 }
                 else if (font.TryGetSecond(out var cffFont))
                 {
@@ -116,17 +135,17 @@
 
             var encoding = encodingReader.Read(dictionary, descriptor, fromFont);
 
-            if (encoding == null && font != null && font.TryGetFirst(out var t1FontReplacment))
+            if (encoding is null && font != null && font.TryGetFirst(out var t1FontReplacement) && t1FontReplacement.Encoding?.Count > 0)
             {
-                encoding = new BuiltInEncoding(t1FontReplacment.Encoding);
+                encoding = new BuiltInEncoding(t1FontReplacement.Encoding);
             }
 
-            return new Type1FontSimple(name, firstCharacter, lastCharacter, widths, descriptor, encoding, toUnicodeCMap, font);
+            return new Type1FontSimple(name, firstCharacter, lastCharacter, widths, descriptor, encoding!, toUnicodeCMap!, font!);
         }
 
-        private Union<Type1Font, CompactFontFormatFontCollection> ParseFontProgram(FontDescriptor descriptor)
+        private Union<Type1Font, CompactFontFormatFontCollection>? ParseFontProgram(FontDescriptor descriptor)
         {
-            if (descriptor?.FontFile == null)
+            if (descriptor?.FontFile is null)
             {
                 return null;
             }
@@ -156,7 +175,7 @@
                 var length1 = stream.StreamDictionary.Get<NumericToken>(NameToken.Length1, pdfScanner);
                 var length2 = stream.StreamDictionary.Get<NumericToken>(NameToken.Length2, pdfScanner);
 
-                var font = Type1FontParser.Parse(new ByteArrayInputBytes(bytes), length1.Int, length2.Int);
+                var font = Type1FontParser.Parse(new MemoryInputBytes(bytes), length1.Int, length2.Int, stackDepthGuard);
 
                 return Union<Type1Font, CompactFontFormatFontCollection>.One(font);
             }

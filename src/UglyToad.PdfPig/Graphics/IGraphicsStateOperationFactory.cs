@@ -3,11 +3,17 @@
     using System.Collections.Generic;
     using Operations;
     using Tokens;
-    using Util.JetBrains.Annotations;
 
-    internal interface IGraphicsStateOperationFactory
+    /// <summary>
+    /// Graphics state operation factory interface.
+    /// </summary>
+    public interface IGraphicsStateOperationFactory
     {
-        [CanBeNull]
-        IGraphicsStateOperation Create(OperatorToken op, IReadOnlyList<IToken> operands);
+        /// <summary>
+        /// Create a graphics state operation.
+        /// </summary>
+        /// <param name="op">The operator token to build from.</param>
+        /// <param name="operands"></param>
+        IGraphicsStateOperation? Create(OperatorToken op, IReadOnlyList<IToken> operands);
     }
 }

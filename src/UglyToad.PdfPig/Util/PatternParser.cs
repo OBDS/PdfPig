@@ -15,14 +15,14 @@
         public static PatternColor Create(IToken pattern, IPdfTokenScanner scanner, IResourceStore resourceStore, ILookupFilterProvider filterProvider)
         {
             DictionaryToken patternDictionary;
-            StreamToken patternStream = null;
+            StreamToken? patternStream = null;
 
-            if (DirectObjectFinder.TryGet(pattern, scanner, out StreamToken fs))
+            if (DirectObjectFinder.TryGet(pattern, scanner, out StreamToken? fs))
             {
                 patternDictionary = fs.StreamDictionary;
                 patternStream = new StreamToken(fs.StreamDictionary, fs.Decode(filterProvider, scanner));
             }
-            else if (DirectObjectFinder.TryGet(pattern, scanner, out DictionaryToken fd))
+            else if (DirectObjectFinder.TryGet(pattern, scanner, out DictionaryToken? fd))
             {
                 patternDictionary = fd;
             }
@@ -36,42 +36,38 @@
                 throw new Exception("TODO");
             }
 
-            int patternType = (patternDictionary.Data[NameToken.PatternType] as NumericToken).Int;
+            int patternType = ((NumericToken)patternDictionary.Data[NameToken.PatternType]).Int;
 
             TransformationMatrix matrix;
             if ((patternDictionary.Data.ContainsKey(NameToken.Matrix) &&
-                DirectObjectFinder.TryGet(patternDictionary.Data[NameToken.Matrix], scanner, out ArrayToken patternMatrix)))
+                DirectObjectFinder.TryGet(patternDictionary.Data[NameToken.Matrix], scanner, out ArrayToken? patternMatrix)))
             {
                 matrix = TransformationMatrix.FromArray(patternMatrix.Data.OfType<NumericToken>().Select(n => n.Data).ToArray());
             }
             else
             {
                 // optional - Default value: the identity matrix [1 0 0 1 0 0]
-                matrix = TransformationMatrix.FromArray(new decimal[] { 1, 0, 0, 1, 0, 0 });
+                matrix = TransformationMatrix.FromArray([1, 0, 0, 1, 0, 0]);
             }
 
-            DictionaryToken patternExtGState = null;
+            DictionaryToken? patternExtGState = null;
             if (!(patternDictionary.Data.ContainsKey(NameToken.ExtGState) &&
                 DirectObjectFinder.TryGet(patternDictionary.Data[NameToken.ExtGState], scanner, out patternExtGState)))
             {
                 // optional
             }
 
-            switch (patternType)
-            {
-                case 1: // Tiling
-                    return CreateTilingPattern(patternStream, patternExtGState, matrix, scanner);
-
-                case 2: // Shading
-                    return CreateShadingPattern(patternDictionary, patternExtGState, matrix, scanner, resourceStore, filterProvider);
-
-                default:
-                    throw new PdfDocumentFormatException($"Invalid Pattern type encountered in page resource dictionary: {patternType}.");
-            }
+            return patternType switch {
+                // Tiling
+                1 => CreateTilingPattern(patternStream!, patternExtGState!, matrix, scanner),
+                // Shading
+                2 => CreateShadingPattern(patternDictionary, patternExtGState, matrix, scanner, resourceStore, filterProvider),
+                _ => throw new PdfDocumentFormatException($"Invalid Pattern type encountered in page resource dictionary: {patternType}.")
+            };
         }
 
         private static PatternColor CreateTilingPattern(StreamToken patternStream, DictionaryToken patternExtGState,
-            TransformationMatrix matrix, IPdfTokenScanner scanner)
+            in TransformationMatrix matrix, IPdfTokenScanner scanner)
         {
             if (!patternStream.StreamDictionary.TryGet<NumericToken>(NameToken.PaintType, scanner, out var paintTypeToken))
             {
@@ -116,17 +112,17 @@
                 patternStream.Data);
         }
 
-        private static PatternColor CreateShadingPattern(DictionaryToken patternDictionary, DictionaryToken patternExtGState,
-            TransformationMatrix matrix, IPdfTokenScanner scanner, IResourceStore resourceStore,
+        private static PatternColor CreateShadingPattern(DictionaryToken patternDictionary, DictionaryToken? patternExtGState,
+            in TransformationMatrix matrix, IPdfTokenScanner scanner, IResourceStore resourceStore,
             ILookupFilterProvider filterProvider)
         {
             IToken shadingToken = patternDictionary.Data[NameToken.Shading];
             Shading patternShading;
-            if (DirectObjectFinder.TryGet(shadingToken, scanner, out DictionaryToken patternShadingDictionary))
+            if (DirectObjectFinder.TryGet(shadingToken, scanner, out DictionaryToken? patternShadingDictionary))
             {
                 patternShading = ShadingParser.Create(patternShadingDictionary, scanner, resourceStore, filterProvider);
             }
-            else if (DirectObjectFinder.TryGet(shadingToken, scanner, out StreamToken patternShadingStream))
+            else if (DirectObjectFinder.TryGet(shadingToken, scanner, out StreamToken? patternShadingStream))
             {
                 patternShading = ShadingParser.Create(patternShadingStream, scanner, resourceStore, filterProvider);
             }
@@ -134,7 +130,7 @@
             {
                 throw new ArgumentException("TODO");
             }
-            return new ShadingPatternColor(matrix, patternExtGState, patternDictionary, patternShading);
+            return new ShadingPatternColor(matrix, patternExtGState!, patternDictionary, patternShading);
         }
     }
 }

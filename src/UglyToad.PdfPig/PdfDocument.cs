@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.IO;
     using AcroForms;
     using Content;
@@ -15,7 +16,6 @@
     using Tokens;
     using Outline;
     using Outline.Destinations;
-    using Util.JetBrains.Annotations;
 
     /// <inheritdoc />
     /// <summary>
@@ -26,35 +26,24 @@
         private bool isDisposed;
         private readonly Lazy<AcroForm> documentForm;
 
-        [NotNull]
         private readonly HeaderVersion version;
-
         private readonly IInputBytes inputBytes;
-
-        [CanBeNull]
-        private readonly EncryptionDictionary encryptionDictionary;
-
-        [NotNull]
+        private readonly EncryptionDictionary? encryptionDictionary;
         private readonly IPdfTokenScanner pdfScanner;
-
         private readonly ILookupFilterProvider filterProvider;
         private readonly BookmarksProvider bookmarksProvider;
         private readonly ParsingOptions parsingOptions;
-
-        [NotNull]
         private readonly Pages pages;
         private readonly NamedDestinations namedDestinations;
-
+        
         /// <summary>
         /// The metadata associated with this document.
         /// </summary>
-        [NotNull]
         public DocumentInformation Information { get; }
 
         /// <summary>
-        /// Access to the underlying raw structure of the document. 
+        /// Access to the underlying raw structure of the document.
         /// </summary>
-        [NotNull]
         public Structure Structure { get; }
 
         /// <summary>
@@ -65,7 +54,7 @@
         /// <summary>
         /// The version number of the PDF specification which this file conforms to, for example 1.4.
         /// </summary>
-        public decimal Version => version.Version;
+        public double Version => version.Version;
 
         /// <summary>
         /// Get the number of pages in this document.
@@ -75,6 +64,7 @@
         /// <summary>
         /// Whether the document content is encrypted.
         /// </summary>
+        [MemberNotNullWhen(true, nameof(encryptionDictionary))]
         public bool IsEncrypted => encryptionDictionary != null;
 
         /// <summary>
@@ -82,17 +72,19 @@
         /// </summary>
         public Action<BookmarkNode, DictionaryToken> OnGettingBookmarkAction { get; set; }
 
-        internal PdfDocument(IInputBytes inputBytes,
+        internal PdfDocument(
+            IInputBytes inputBytes,
             HeaderVersion version,
-            CrossReferenceTable crossReferenceTable,
             Catalog catalog,
             DocumentInformation information,
-            EncryptionDictionary encryptionDictionary,
+            EncryptionDictionary? encryptionDictionary,
             IPdfTokenScanner pdfScanner,
             ILookupFilterProvider filterProvider,
             AcroFormFactory acroFormFactory,
             BookmarksProvider bookmarksProvider,
-            ParsingOptions parsingOptions)
+            ParsingOptions parsingOptions,
+            CrossReferenceTable crossReferenceTable,
+            TrailerDictionary trailer)
         {
             this.inputBytes = inputBytes;
             this.version = version ?? throw new ArgumentNullException(nameof(version));
@@ -105,9 +97,9 @@
             Information = information ?? throw new ArgumentNullException(nameof(information));
             pages = catalog.Pages;
             namedDestinations = catalog.NamedDestinations;
-            Structure = new Structure(catalog, crossReferenceTable, pdfScanner);
+            Structure = new Structure(catalog, pdfScanner, filterProvider, trailer, crossReferenceTable);
             Advanced = new AdvancedPdfDocumentAccess(pdfScanner, filterProvider, catalog);
-            documentForm = new Lazy<AcroForm>(() => acroFormFactory.GetAcroForm(catalog));
+            documentForm = new Lazy<AcroForm>(() => acroFormFactory.GetAcroForm(catalog)!);
         }
 
         /// <summary>
@@ -116,27 +108,59 @@
         /// <param name="fileBytes">The bytes of the PDF file.</param>
         /// <param name="options">Optional parameters controlling parsing.</param>
         /// <returns>A <see cref="PdfDocument"/> providing access to the file contents.</returns>
-        public static PdfDocument Open(byte[] fileBytes, ParsingOptions options = null) => PdfDocumentFactory.Open(fileBytes, options);
- 
+        public static PdfDocument Open(byte[] fileBytes, ParsingOptions? options = null) => PdfDocumentFactory.Open(fileBytes, options);
+
+        /// <summary>
+        /// Creates a <see cref="PdfDocument"/> for reading from the provided file bytes.
+        /// </summary>
+        /// <param name="memory">The bytes of the PDF file.</param>
+        /// <param name="options">Optional parameters controlling parsing.</param>
+        /// <returns>A <see cref="PdfDocument"/> providing access to the file contents.</returns>
+        public static PdfDocument Open(ReadOnlyMemory<byte> memory, ParsingOptions? options = null) => PdfDocumentFactory.Open(memory, options);
+
         /// <summary>
         /// Opens a file and creates a <see cref="PdfDocument"/> for reading from the provided file path.
         /// </summary>
         /// <param name="filePath">The full path to the file location of the PDF file.</param>
         /// <param name="options">Optional parameters controlling parsing.</param>
         /// <returns>A <see cref="PdfDocument"/> providing access to the file contents.</returns>
-        public static PdfDocument Open(string filePath, ParsingOptions options = null) => PdfDocumentFactory.Open(filePath, options);
+        public static PdfDocument Open(string filePath, ParsingOptions? options = null) => PdfDocumentFactory.Open(filePath, options);
 
         /// <summary>
         /// Creates a <see cref="PdfDocument"/> for reading from the provided stream.
+        /// <para>
+        /// If the stream provided is not seekable (<see cref="Stream.CanSeek"/> is <c>false</c>), the stream will be copied into a new <see cref="MemoryStream"/>.
+        /// </para>
         /// The caller must manage disposing the stream. The created PdfDocument will not dispose the stream.
         /// </summary>
         /// <param name="stream">
         /// A stream of the file contents, this must support reading and seeking.
+        /// <para>If the stream provided is not seekable (<see cref="Stream.CanSeek"/> is <c>false</c>), the stream will be copied into a new <see cref="MemoryStream"/>.</para>
         /// The PdfDocument will not dispose of the provided stream.
         /// </param>
         /// <param name="options">Optional parameters controlling parsing.</param>
         /// <returns>A <see cref="PdfDocument"/> providing access to the file contents.</returns>
-        public static PdfDocument Open(Stream stream, ParsingOptions options = null) => PdfDocumentFactory.Open(stream, options);
+        public static PdfDocument Open(Stream stream, ParsingOptions? options = null) => PdfDocumentFactory.Open(stream, options);
+
+        /// <summary>
+        /// Add a page factory.
+        /// </summary>
+        public void AddPageFactory<TPage>(IPageFactory<TPage> pageFactory)
+        {
+            pages.AddPageFactory(pageFactory);
+        }
+
+        /// <summary>
+        /// Add a page factory.
+        /// </summary>
+#if NET
+        public void AddPageFactory<TPage, [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TPageFactory>() where TPageFactory : IPageFactory<TPage>
+#else
+        public void AddPageFactory<TPage, TPageFactory>() where TPageFactory : IPageFactory<TPage>
+#endif
+        {
+            pages.AddPageFactory<TPage, TPageFactory>();
+        }
 
         /// <summary>
         /// Get the page with the specified page number (1 indexed).
@@ -168,6 +192,36 @@
         }
 
         /// <summary>
+        /// Get the page with the specified page number (1 indexed), using the specified page factory.
+        /// </summary>
+        /// <typeparam name="TPage"></typeparam>
+        /// <param name="pageNumber">The number of the page to return, this starts from 1.</param>
+        /// <returns>The page.</returns>
+        public TPage GetPage<TPage>(int pageNumber)
+        {
+            if (isDisposed)
+            {
+                throw new ObjectDisposedException("Cannot access page after the document is disposed.");
+            }
+
+            parsingOptions.Logger.Debug($"Accessing page {pageNumber}.");
+
+            try
+            {
+                return pages.GetPage<TPage>(pageNumber, namedDestinations, parsingOptions);
+            }
+            catch (Exception ex)
+            {
+                if (IsEncrypted)
+                {
+                    throw new PdfDocumentEncryptedException("Document was encrypted which may have caused error when retrieving page.", encryptionDictionary!, ex);
+                }
+
+                throw;
+            }
+        }
+
+        /// <summary>
         /// Gets all pages in this document in order.
         /// </summary>
         public IEnumerable<Page> GetPages()
@@ -179,13 +233,24 @@
         }
 
         /// <summary>
+        /// Gets all pages in this document in order, using the specified page factory.
+        /// </summary>
+        public IEnumerable<TPage> GetPages<TPage>()
+        {
+            for (var i = 0; i < NumberOfPages; i++)
+            {
+                yield return GetPage<TPage>(i + 1);
+            }
+        }
+
+        /// <summary>
         /// Get the document level metadata if present.
         /// The metadata is XML in the (Extensible Metadata Platform) XMP format.
         /// </summary>
         /// <remarks>This will throw a <see cref="ObjectDisposedException"/> if called on a disposed <see cref="PdfDocument"/>.</remarks>
         /// <param name="metadata">The metadata stream if it exists.</param>
         /// <returns><see langword="true"/> if the metadata is present, <see langword="false"/> otherwise.</returns>
-        public bool TryGetXmpMetadata(out XmpMetadata metadata)
+        public bool TryGetXmpMetadata([NotNullWhen(true)] out XmpMetadata? metadata)
         {
             if (isDisposed)
             {
@@ -194,7 +259,7 @@
 
             metadata = null;
 
-            if (!Structure.Catalog.CatalogDictionary.TryGet(NameToken.Metadata, pdfScanner, out StreamToken xmpStreamToken))
+            if (!Structure.Catalog.CatalogDictionary.TryGet(NameToken.Metadata, pdfScanner, out StreamToken? xmpStreamToken))
             {
                 return false;
             }
@@ -208,7 +273,7 @@
         /// Gets the bookmarks if this document contains some.
         /// </summary>
         /// <remarks>This will throw a <see cref="ObjectDisposedException"/> if called on a disposed <see cref="PdfDocument"/>.</remarks>
-        public bool TryGetBookmarks(out Bookmarks bookmarks)
+        public bool TryGetBookmarks([NotNullWhen(true)] out Bookmarks? bookmarks, bool allowContainerNode = false)
         {
             if (isDisposed)
             {
@@ -217,13 +282,9 @@
 
             bookmarksProvider.OnGettingBookmarkAction = OnGettingBookmarkAction;
 
-            bookmarks = bookmarksProvider.GetBookmarks(Structure.Catalog);
-            if (bookmarks != null)
-            {
-                return true;
-            }
+            bookmarks = bookmarksProvider.GetBookmarks(Structure.Catalog, allowContainerNode);
 
-            return false;
+            return bookmarks != null;
         }
 
         /// <summary>
@@ -254,6 +315,7 @@
                 Advanced.Dispose();
                 pdfScanner.Dispose();
                 inputBytes.Dispose();
+                pages.Dispose();
             }
             catch (Exception ex)
             {

@@ -1,11 +1,11 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Parser.Handlers
 {
     using System;
+    using System.Diagnostics.CodeAnalysis;
     using CidFonts;
     using Cmap;
     using Composite;
     using Core;
-    using Filters;
     using Fonts;
     using Logging;
     using Parts;
@@ -14,23 +14,28 @@
     using Tokens;
     using Util;
 
-    internal class Type0FontHandler : IFontHandler
+    internal sealed class Type0FontHandler : IFontHandler
     {
         private readonly CidFontFactory cidFontFactory;
-        private readonly ILookupFilterProvider filterProvider;
         private readonly IPdfTokenScanner scanner;
         private readonly ILog logger;
+        private readonly CMapLocalCache cmapLocalCache;
+        private readonly ParsingOptions parsingOptions;
+        private readonly StackDepthGuard stackDepthGuard;
 
         public Type0FontHandler(
             CidFontFactory cidFontFactory,
-            ILookupFilterProvider filterProvider,
             IPdfTokenScanner scanner,
-            ILog logger)
+            CMapLocalCache cmapLocalCache,
+            StackDepthGuard stackDepthGuard,
+            ParsingOptions parsingOptions)
         {
             this.cidFontFactory = cidFontFactory;
-            this.filterProvider = filterProvider;
             this.scanner = scanner;
-            this.logger = logger;
+            this.cmapLocalCache = cmapLocalCache;
+            logger = parsingOptions.Logger;
+            this.parsingOptions = parsingOptions;
+            this.stackDepthGuard = stackDepthGuard;
         }
 
         public IFont Generate(DictionaryToken dictionary)
@@ -56,7 +61,7 @@
                     descendantFontDictionary = (DictionaryToken)descendantObject;
                 }
 
-                cidFont = ParseDescendant(descendantFontDictionary);
+                cidFont = ParseDescendant(descendantFontDictionary)!;
             }
             else
             {
@@ -65,24 +70,17 @@
 
             var (ucs2CMap, isChineseJapaneseOrKorean) = GetUcs2CMap(dictionary, isCMapPredefined, cidFont);
 
-            CMap toUnicodeCMap = null;
+            CMap? toUnicodeCMap = null;
             if (dictionary.ContainsKey(NameToken.ToUnicode))
             {
                 var toUnicodeValue = dictionary.Data[NameToken.ToUnicode];
 
-                if (DirectObjectFinder.TryGet<StreamToken>(toUnicodeValue, scanner, out var toUnicodeStream))
-                {
-                    var decodedUnicodeCMap = toUnicodeStream?.Decode(filterProvider, scanner);
-
-                    if (decodedUnicodeCMap != null)
-                    {
-                        toUnicodeCMap = CMapCache.Parse(new ByteArrayInputBytes(decodedUnicodeCMap));
-                    }
-                }
+                if (DirectObjectFinder.TryGet<StreamToken>(toUnicodeValue, scanner, out var toUnicodeStream)
+                    && cmapLocalCache.TryGet(toUnicodeStream,out toUnicodeCMap))
+                { }
                 else if (DirectObjectFinder.TryGet<NameToken>(toUnicodeValue, scanner, out var toUnicodeName)
-                && CMapCache.TryGet(toUnicodeName.Data, out toUnicodeCMap))
-                {
-                }
+                         && cmapLocalCache.TryGet(toUnicodeName.Data, out toUnicodeCMap))
+                { }
                 else
                 {
                     // Rather than throwing here, let's try returning the font anyway since
@@ -92,12 +90,12 @@
                 }
             }
 
-            var font = new Type0Font(baseFont, cidFont, cMap, toUnicodeCMap, ucs2CMap, isChineseJapaneseOrKorean);
+            var font = new Type0Font(baseFont!, cidFont, cMap, toUnicodeCMap, ucs2CMap, parsingOptions, isChineseJapaneseOrKorean);
 
             return font;
         }
 
-        private static bool TryGetFirstDescendant(DictionaryToken dictionary, out IToken descendant)
+        private static bool TryGetFirstDescendant(DictionaryToken dictionary, [NotNullWhen(true)] out IToken? descendant)
         {
             descendant = null;
 
@@ -133,7 +131,7 @@
             return false;
         }
 
-        private ICidFont ParseDescendant(DictionaryToken dictionary)
+        private ICidFont? ParseDescendant(DictionaryToken dictionary)
         {
             var type = dictionary.GetNameOrDefault(NameToken.Type);
             if (type?.Equals(NameToken.Font) != true)
@@ -141,9 +139,7 @@
                 throw new InvalidFontFormatException($"Expected \'Font\' dictionary but found \'{type}\'");
             }
 
-            var result = cidFontFactory.Generate(dictionary);
-
-            return result;
+            return cidFontFactory.Generate(dictionary);
         }
 
         private CMap ReadEncoding(DictionaryToken dictionary, out bool isCMapPredefined)
@@ -151,9 +147,9 @@
             isCMapPredefined = false;
             CMap result;
 
-            if (dictionary.TryGet(NameToken.Encoding, scanner, out NameToken encodingName))
+            if (dictionary.TryGet(NameToken.Encoding, scanner, out NameToken? encodingName))
             {
-                if (!CMapCache.TryGet(encodingName.Data, out var cmap))
+                if (!cmapLocalCache.TryGet(encodingName.Data, out var cmap))
                 {
                     throw new InvalidOperationException($"Missing CMap named {encodingName.Data}.");
                 }
@@ -162,13 +158,14 @@
 
                 isCMapPredefined = true;
             }
-            else if (dictionary.TryGet(NameToken.Encoding, scanner, out StreamToken stream))
+            else if (dictionary.TryGet(NameToken.Encoding, scanner, out StreamToken? stream))
             {
-                var decoded = stream.Decode(filterProvider, scanner);
+                if (!cmapLocalCache.TryGet(stream, out var cmap))
+                {
+                    throw new InvalidOperationException($"Could not read CMap from stream in the dictionary: {dictionary}");
+                }
 
-                var cmap = CMapCache.Parse(new ByteArrayInputBytes(decoded));
-
-                result = cmap ?? throw new InvalidOperationException($"Could not read CMap from stream in the dictionary: {dictionary}");
+                result = cmap;
             }
             else
             {
@@ -179,7 +176,7 @@
             return result;
         }
 
-        private static (CMap, bool isChineseJapaneseOrKorean) GetUcs2CMap(DictionaryToken dictionary, bool isCMapPredefined, ICidFont cidFont)
+        private (CMap?, bool isChineseJapaneseOrKorean) GetUcs2CMap(DictionaryToken dictionary, bool isCMapPredefined, ICidFont cidFont)
         {
             if (!isCMapPredefined)
             {
@@ -193,14 +190,14 @@
 
             var encodingName = dictionary.GetNameOrDefault(NameToken.Encoding);
 
-            if (encodingName == null)
+            if (encodingName is null)
             {
                 return (null, false);
             }
 
             var isChineseJapaneseOrKorean = false;
 
-            if (cidFont != null && string.Equals(cidFont.SystemInfo.Registry, "Adobe", StringComparison.OrdinalIgnoreCase))
+            if (cidFont is not null && string.Equals(cidFont.SystemInfo.Registry, "Adobe", StringComparison.OrdinalIgnoreCase))
             {
                 isChineseJapaneseOrKorean = string.Equals(cidFont.SystemInfo.Ordering, "GB1", StringComparison.OrdinalIgnoreCase)
                                                 || string.Equals(cidFont.SystemInfo.Ordering, "CNS1", StringComparison.OrdinalIgnoreCase)
@@ -221,11 +218,11 @@
                 return (null, false);
             }
 
-            var fullCmapName = cidFont.SystemInfo.ToString();
+            var fullCmapName = cidFont!.SystemInfo.ToString();
 
             string registry;
             string ordering;
-            if (CMapCache.TryGet(fullCmapName, out var nonUnicodeCMap))
+            if (CMapCache.TryGet(fullCmapName, stackDepthGuard, out var nonUnicodeCMap))
             {
                 registry = nonUnicodeCMap.Info.Registry;
                 ordering = nonUnicodeCMap.Info.Ordering;
@@ -238,7 +235,7 @@
             
             var unicodeCMapName = $"{registry}-{ordering}-UCS2";
 
-            if (!CMapCache.TryGet(unicodeCMapName, out var unicodeCMap))
+            if (!CMapCache.TryGet(unicodeCMapName, stackDepthGuard, out var unicodeCMap))
             {
                 throw new InvalidFontFormatException($"Could not locate CMap by name: {nonUnicodeCMap}.");
             }

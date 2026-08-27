@@ -5,11 +5,21 @@
     using Tokens;
     using UglyToad.PdfPig.Util;
 
-    internal static class DecodeParameterResolver
+    /// <summary>
+    /// Decode parameter resolver.
+    /// </summary>
+    public static class DecodeParameterResolver
     {
+        /// <summary>
+        /// Get the filter parameters from a stream dictionary.
+        /// </summary>
+        /// <param name="streamDictionary">The stream dictionary.</param>
+        /// <param name="index">If the filter element is an <see cref="ArrayToken"/>, the index in the array to take the dictionary from.</param>
+        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="ArgumentOutOfRangeException"></exception>
         public static DictionaryToken GetFilterParameters(DictionaryToken streamDictionary, int index)
         {
-            if (streamDictionary == null)
+            if (streamDictionary is null)
             {
                 throw new ArgumentNullException(nameof(streamDictionary));
             }
@@ -21,7 +31,9 @@
 
             var filter = streamDictionary.GetObjectOrDefault(NameToken.Filter, NameToken.F);
 
-            var parameters = streamDictionary.GetObjectOrDefault(NameToken.DecodeParms, NameToken.Dp);
+            // For inline images the abbreviated key takes precedence over the full form when both are
+            // present (ISO 32000-2 Table 91 NOTE).
+            var parameters = streamDictionary.GetObjectOrDefault(NameToken.Dp, NameToken.DecodeParms);
 
             switch (filter)
             {

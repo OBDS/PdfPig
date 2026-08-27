@@ -1,8 +1,8 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Parser.Handlers
 {
+    using System.Collections.Generic;
     using Cmap;
     using Core;
-    using Filters;
     using Fonts;
     using Fonts.Encodings;
     using PdfPig.Parser.Parts;
@@ -13,16 +13,17 @@
 
     internal class Type3FontHandler : IFontHandler
     {
-        private readonly ILookupFilterProvider filterProvider;
         private readonly IEncodingReader encodingReader;
         private readonly IPdfTokenScanner scanner;
+        private readonly CMapLocalCache cmapLocalCache;
 
-        public Type3FontHandler(IPdfTokenScanner scanner, ILookupFilterProvider filterProvider,
-            IEncodingReader encodingReader)
+        public Type3FontHandler(IPdfTokenScanner scanner,
+            IEncodingReader encodingReader,
+            CMapLocalCache cMapLocalCache)
         {
-            this.filterProvider = filterProvider;
             this.encodingReader = encodingReader;
             this.scanner = scanner;
+            this.cmapLocalCache = cMapLocalCache;
         }
 
         public IFont Generate(DictionaryToken dictionary)
@@ -41,30 +42,49 @@
             var lastCharacter = FontDictionaryAccessHelper.GetLastCharacter(dictionary);
             var widths = FontDictionaryAccessHelper.GetWidths(scanner, dictionary);
             
-            Encoding encoding = encodingReader.Read(dictionary);
+            Encoding? encoding = encodingReader.Read(dictionary);
 
-            CMap toUnicodeCMap = null;
+            CMap? toUnicodeCMap = null;
             if (dictionary.TryGet(NameToken.ToUnicode, out var toUnicodeObj))
             {
                 var toUnicode = DirectObjectFinder.Get<StreamToken>(toUnicodeObj, scanner);
-
-                var decodedUnicodeCMap = toUnicode?.Decode(filterProvider, scanner);
-
-                if (decodedUnicodeCMap != null)
+                if (toUnicode is not null)
                 {
-                    toUnicodeCMap = CMapCache.Parse(new ByteArrayInputBytes(decodedUnicodeCMap));
+                    cmapLocalCache.TryGet(toUnicode, out toUnicodeCMap);
                 }
             }
 
             var name = GetFontName(dictionary);
 
-            return new Type3Font(name, boundingBox, fontMatrix, encoding, firstCharacter,
-                lastCharacter, widths, toUnicodeCMap);
+            var charProcs = ReadCharProcs(dictionary);
+            dictionary.TryGet(NameToken.Resources, scanner, out DictionaryToken? resources);
+
+            return new Type3Font(name, boundingBox, fontMatrix, encoding!,
+                firstCharacter,
+                lastCharacter, widths, toUnicodeCMap!, charProcs, resources);
+        }
+
+        private IReadOnlyDictionary<string, StreamToken>? ReadCharProcs(DictionaryToken dictionary)
+        {
+            if (!dictionary.TryGet(NameToken.CharProcs, scanner, out DictionaryToken? charProcsDictionary))
+            {
+                return null;
+            }
+
+            var result = new Dictionary<string, StreamToken>(charProcsDictionary.Data.Count);
+            foreach (var entry in charProcsDictionary.Data)
+            {
+                if (DirectObjectFinder.TryGet(entry.Value, scanner, out StreamToken? charProcStream))
+                {
+                    result[entry.Key] = charProcStream;
+                }
+            }
+            return result;
         }
 
         private NameToken GetFontName(DictionaryToken dictionary)
         {
-            if (dictionary.TryGet(NameToken.Name, scanner, out NameToken fontName))
+            if (dictionary.TryGet(NameToken.Name, scanner, out NameToken? fontName))
             {
                 return fontName;
             }
@@ -80,7 +100,11 @@
             }
 
             var matrixArray = DirectObjectFinder.Get<ArrayToken>(matrixObject, scanner);
-            
+            if (matrixArray is null)
+            {
+                throw new InvalidFontFormatException($"Invalid font matrix found: {dictionary} (token: {matrixObject}).");
+            }
+
             return TransformationMatrix.FromValues(matrixArray.GetNumeric(0).Double, matrixArray.GetNumeric(1).Double,
                 matrixArray.GetNumeric(2).Double, matrixArray.GetNumeric(3).Double, matrixArray.GetNumeric(4).Double,
                 matrixArray.GetNumeric(5).Double);

@@ -1,8 +1,8 @@
 ﻿namespace UglyToad.PdfPig.Graphics.Operations.TextShowing
 {
-    using System.IO;
     using PdfPig.Core;
-    using Util.JetBrains.Annotations;
+    using System;
+    using System.IO;
 
     /// <inheritdoc />
     /// <summary>
@@ -34,14 +34,12 @@
         /// <summary>
         /// The text string to show.
         /// </summary>
-        [CanBeNull]
-        public string Text { get; }
+        public string? Text { get; }
 
         /// <summary>
         /// The bytes of the string to show.
         /// </summary>
-        [CanBeNull]
-        public byte[] Bytes { get; }
+        public ReadOnlyMemory<byte> Bytes { get; }
 
         /// <summary>
         /// Create a new <see cref="ShowText"/>.
@@ -54,7 +52,7 @@
         /// <summary>
         /// Create a new <see cref="ShowText"/>.
         /// </summary>
-        public ShowText(byte[] hexBytes)
+        public ShowText(ReadOnlyMemory<byte> hexBytes)
         {
             Bytes = hexBytes;
         }
@@ -62,12 +60,11 @@
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            var input = new ByteArrayInputBytes(Text != null ? OtherEncodings.StringAsLatin1Bytes(Text) : Bytes);
-
+            var input = new MemoryInputBytes(Text != null ? OtherEncodings.StringAsLatin1Bytes(Text) : Bytes);
             operationContext.ShowText(input);
         }
 
-        string EscapeText(string text)
+        private static string? EscapeText(string? text)
         {
             if (text is null) return null;
             // Fix Issue 350 from PDF Spec 1.7 (page 408) on handling 'special characters' of '(', ')' and '\'.
@@ -82,7 +79,7 @@
             // as single-byte or multiple-byte character codes. 
 
             // Note: order of replacing is important. Replace slash first before brackets.
-            text = text.Replace(@"\", @"\\)");  // Escape any slash          '\'  -> '\\'
+            text = text.Replace(@"\", @"\\");  // Escape any slash          '\'  -> '\\'
             text = text.Replace("(", @"\(");    // Escape any open  brackets '('  -> '\('
             text = text.Replace(")", @"\)");    // Escape any close brackets ')'  -> '\)'
 
@@ -92,10 +89,9 @@
         /// <inheritdoc />
         public void Write(Stream stream)
         {
-             
-            if (Bytes != null)
+            if (!Bytes.IsEmpty)
             {
-                stream.WriteHex(Bytes);
+                stream.WriteHex(Bytes.Span);
             }
             else
             {

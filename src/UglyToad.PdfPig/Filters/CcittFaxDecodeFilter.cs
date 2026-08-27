@@ -1,24 +1,29 @@
 ﻿namespace UglyToad.PdfPig.Filters
 {
     using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
+    using CcittFax;
+    using Core;
     using Tokens;
     using Util;
 
+    // Filter updated from original port because of issue #982
+
     /// <summary>
     /// Decodes image data that has been encoded using either Group 3 or Group 4.
-    ///
+    /// <para>
     /// Ported from https://github.com/apache/pdfbox/blob/714156a15ea6fcfe44ac09345b01e192cbd74450/pdfbox/src/main/java/org/apache/pdfbox/filter/CCITTFaxFilter.java
+    /// </para>
     /// </summary>
-    internal class CcittFaxDecodeFilter : IFilter
+    public sealed class CcittFaxDecodeFilter : IFilter
     {
         /// <inheritdoc />
         public bool IsSupported { get; } = true;
 
         /// <inheritdoc />
-        public byte[] Decode(IReadOnlyList<byte> input, DictionaryToken streamDictionary, int filterIndex)
+        public Memory<byte> Decode(Memory<byte> input,
+            DictionaryToken streamDictionary,
+            IFilterProvider filterProvider,
+            int filterIndex)
         {
             var decodeParms = DecodeParameterResolver.GetFilterParameters(streamDictionary, filterIndex);
 
@@ -38,8 +43,9 @@
 
             var k = decodeParms.GetIntOrDefault(NameToken.K, 0);
             var encodedByteAlign = decodeParms.GetBooleanOrDefault(NameToken.EncodedByteAlign, false);
-            var compressionType = DetermineCompressionType(input, k);
-            using (var stream = new CcittFaxDecoderStream(new MemoryStream(input.ToArray()), cols, compressionType, encodedByteAlign))
+            var compressionType = DetermineCompressionType(input.Span, k);
+
+            using (var stream = new CcittFaxDecoderStream(MemoryHelper.AsReadOnlyMemoryStream(input), cols, compressionType, encodedByteAlign))
             {
                 var arraySize = (cols + 7) / 8 * rows;
                 var decompressed = new byte[arraySize];
@@ -56,16 +62,11 @@
             }
         }
 
-        private static CcittFaxCompressionType DetermineCompressionType(IReadOnlyList<byte> input, int k)
+        private static CcittFaxCompressionType DetermineCompressionType(ReadOnlySpan<byte> input, int k)
         {
             if (k == 0)
             {
                 var compressionType = CcittFaxCompressionType.Group3_1D; // Group 3 1D
-
-                if (input.Count < 20)
-                {
-                    throw new InvalidOperationException("The format is invalid");
-                }
 
                 if (input[0] != 0 || (input[1] >> 4 != 1 && input[1] != 1))
                 {
@@ -110,11 +111,12 @@
             decoderStream.Close();
         }
 
-        private static void InvertBitmap(byte[] bufferData)
+        private static void InvertBitmap(Span<byte> bufferData)
         {
-            for (int i = 0, c = bufferData.Length; i < c; i++)
+            for (int i = 0; i < bufferData.Length; i++)
             {
-                bufferData[i] = (byte)(~bufferData[i] & 0xFF);
+                ref byte b = ref bufferData[i];
+                b = (byte)(~b & 0xFF);
             }
         }
     }

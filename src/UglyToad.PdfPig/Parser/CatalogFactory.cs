@@ -14,12 +14,13 @@
         public static Catalog Create(IndirectReference rootReference, DictionaryToken dictionary,
             IPdfTokenScanner scanner, PageFactory pageFactory, ILog log, bool isLenientParsing)
         {
-            if (dictionary == null)
+            if (dictionary is null)
             {
                 throw new ArgumentNullException(nameof(dictionary));
             }
 
-            if (dictionary.TryGet(NameToken.Type, out var type) && !ReferenceEquals(type, NameToken.Catalog))
+            if (dictionary.TryGet(NameToken.Type, out var type) && !ReferenceEquals(type, NameToken.Catalog)
+                && !isLenientParsing)
             {
                 throw new PdfDocumentFormatException($"The type of the catalog dictionary was not Catalog: {dictionary}.");
             }
@@ -29,7 +30,7 @@
                 throw new PdfDocumentFormatException($"No pages entry was found in the catalog dictionary: {dictionary}.");
             }
 
-            DictionaryToken pagesDictionary;
+            DictionaryToken? pagesDictionary;
             var pagesReference = rootReference;
 
             if (value is IndirectReferenceToken pagesRef)
@@ -44,6 +45,18 @@
             else
             {
                 pagesDictionary = DirectObjectFinder.Get<DictionaryToken>(value, scanner);
+            }
+
+            if (pagesDictionary is null)
+            {
+                if (isLenientParsing)
+                {
+                    pagesDictionary = new DictionaryToken(new Dictionary<NameToken, IToken>());
+                }
+                else
+                {
+                    throw new PdfDocumentFormatException("Pages entry is null.");
+                }
             }
 
             var pages = PagesFactory.Create(pagesReference, pagesDictionary, scanner, pageFactory, log, isLenientParsing);

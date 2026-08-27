@@ -59,12 +59,13 @@
                 {
                     letter = new Letter(
                         " ",
-                        letter.GlyphRectangle,
+                        letter.BoundingBox,
+                        letter.GlyphRectangleLoose,
                         letter.StartBaseLine,
                         letter.EndBaseLine,
                         letter.Width,
                         letter.FontSize,
-                        letter.Font,
+                        letter.GetFont()!,
                         letter.RenderingMode,
                         letter.StrokeColor,
                         letter.FillColor,
@@ -109,6 +110,11 @@
                     else if (previous.Value != " ")
                     {
                         var gap = letter.StartBaseLine.X - previous.EndBaseLine.X;
+
+                        if (options.NegativeGapAsWhitespace)
+                        {
+                            gap = Math.Abs(gap);
+                        }
 
                         if (WhitespaceSizeStatistics.IsProbablyWhitespace(gap, previous))
                         {
@@ -178,6 +184,13 @@
             /// character. Default <see langword="false"/>.
             /// </summary>
             public bool ReplaceWhitespaceWithSpace { get; set; }
+
+            /// <summary>
+            /// When parsing PDF files with tables containing multiple lines in a cell or "merged" cells,
+            /// the separate words can appear out of horizontal order. This option can better predict the
+            ///  spaces between the words. Default <see langword="false"/>.
+            /// </summary>
+            public bool NegativeGapAsWhitespace { get; set; }
         }
     }
 }

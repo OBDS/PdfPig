@@ -1,12 +1,8 @@
 ﻿namespace UglyToad.PdfPig.Tests.Integration
 {
-    using System;
-    using System.IO;
-    using System.Linq;
     using UglyToad.PdfPig.Content;
     using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
     using UglyToad.PdfPig.Graphics.Colors;
-    using Xunit;
 
     public class ColorSpaceTests
     {
@@ -31,16 +27,37 @@
                 // image 12
                 var image12 = images1[12];
                 Assert.Equal(ColorSpace.Indexed, image12.ColorSpaceDetails.Type);
-                Assert.Equal(ColorSpace.DeviceN, image12.ColorSpaceDetails.BaseType);
+                Assert.Equal(ColorSpace.DeviceN, ((IndexedColorSpaceDetails)image12.ColorSpaceDetails).BaseColorSpace.Type);
+                Assert.Equal(ColorSpace.DeviceCMYK, image12.ColorSpaceDetails.BaseType);
                 Assert.True(image12.TryGetPng(out byte[] bytes1_12)); // Cyan square
                 File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-3136-0_1_12.png"), bytes1_12);
 
                 // image 13
                 var image13 = images1[13];
                 Assert.Equal(ColorSpace.Indexed, image13.ColorSpaceDetails.Type);
-                Assert.Equal(ColorSpace.DeviceN, image13.ColorSpaceDetails.BaseType);
+                Assert.Equal(ColorSpace.DeviceN, ((IndexedColorSpaceDetails)image13.ColorSpaceDetails).BaseColorSpace.Type);
+                Assert.Equal(ColorSpace.DeviceCMYK, image13.ColorSpaceDetails.BaseType);
                 Assert.True(image13.TryGetPng(out byte[] bytes1_13)); // Cyan square
                 File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-3136-0_1_13.png"), bytes1_13);
+            }
+        }
+
+        [Fact]
+        public void BitsPerComponents16()
+        {
+            var path = IntegrationHelpers.GetDocumentPath("MOZILLA-3136-0.pdf");
+
+            using (var document = PdfDocument.Open(path))
+            {
+                var page1 = document.GetPage(3);
+                var images1 = page1.GetImages().ToArray();
+
+                var image9 = images1[9];
+
+                Assert.Equal(16 , image9.BitsPerComponent);
+
+                Assert.True(image9.TryGetPng(out byte[] bytes_3_9));
+                File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-3136-0_3_9_16bits.png"), bytes_3_9);
             }
         }
 
@@ -105,7 +122,7 @@
             {
                 var page1 = document.GetPage(1);
                 var images = page1.GetImages().ToArray();
-                var image1page1 = images.ElementAt(0);
+                var image1page1 = images[0];
                 var separationCs = image1page1.ColorSpaceDetails as SeparationColorSpaceDetails;
                 Assert.NotNull(separationCs);
                 Assert.True(separationCs.AlternateColorSpace is DeviceCmykColorSpaceDetails);
@@ -117,6 +134,39 @@
                         File.WriteAllBytes(Path.Combine(OutputFolder, $"MOZILLA-7375-0_1_{i}.png"), png);
                     }
                 }
+            }
+        }
+
+        [Fact]
+        public void SeparationColorSpace()
+        {
+            var path = IntegrationHelpers.GetDocumentPath("MOZILLA-3136-0.pdf");
+
+            using (var document = PdfDocument.Open(path))
+            {
+                var page = document.GetPage(4);
+                var images = page.GetImages().ToArray();
+
+                var image4 = images[4];
+
+                var separation = image4.ColorSpaceDetails as SeparationColorSpaceDetails;
+                Assert.NotNull(separation);
+
+                Assert.True(image4.TryGetPng(out var png4));
+
+                File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-3136-0_4_separation.png"), png4);
+
+                // Green dolphin image 
+                // "Colorized TIFF (should appear only in GWG Green separation)"
+                var image9 = images[9];
+
+                var indexedCs = image9.ColorSpaceDetails as IndexedColorSpaceDetails;
+                Assert.NotNull(indexedCs);
+                Assert.Equal(ColorSpace.Separation, indexedCs.BaseColorSpace.Type);
+
+                Assert.True(image9.TryGetPng(out var png9));
+
+                File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-3136-0_9_separation.png"), png9);
             }
         }
 
@@ -221,34 +271,7 @@
                 File.WriteAllBytes(Path.Combine(OutputFolder, "MOZILLA-10225-0_341_0.png"), bytes341_0);
             }
         }
-
-        [Fact]
-        public void SeparationLabColorSpace()
-        {
-            // Test with TIKA_1552_0.pdf
-            // https://icolorpalette.com/color/pantone-289-c
-            // Pantone 289 C Color | #0C2340
-            // Rgb : rgb(12,35,64)
-            // CIE L*a*b* : 13.53, 2.89, -21.08
-
-            var path = IntegrationHelpers.GetDocumentPath("TIKA-1552-0.pdf");
-
-            using (var document = PdfDocument.Open(path))
-            {
-                var page1 = document.GetPage(1);
-
-                var background = page1.ExperimentalAccess.Paths[0];
-                Assert.True(background.IsFilled);
-
-                var (r, g, b) = background.FillColor.ToRGBValues();
-
-                // Colors picked from Acrobat reader: rgb(11, 34, 64)
-                Assert.Equal(10, ConvertToByte(r)); // Should be 11, but close enough
-                Assert.Equal(34, ConvertToByte(g));
-                Assert.Equal(64, ConvertToByte(b));
-            }
-        }
-
+        
         [Fact]
         public void CanGetAllPagesImages()
         {
@@ -279,7 +302,7 @@
             using (var document = PdfDocument.Open(path))
             {
                 Page page1 = document.GetPage(1);
-                var paths1 = page1.ExperimentalAccess.Paths.Where(p => p.IsFilled).ToArray();
+                var paths1 = page1.Paths.Where(p => p.IsFilled).ToArray();
                 var reflexRed = paths1[0].FillColor.ToRGBValues(); // 'Reflex Red' Separation color space
                 Assert.Equal(0.930496, reflexRed.r, 6);
                 Assert.Equal(0.111542, reflexRed.g, 6);
@@ -293,7 +316,7 @@
                 Assert.Equal("w", firstLetter.Value);
                 Assert.Equal((0, 0, 1), firstLetter.Color.ToRGBValues()); // Blue
 
-                var paths2 = page2.ExperimentalAccess.Paths;
+                var paths2 = page2.Paths;
                 var filledPath = paths2.Where(p => p.IsFilled).ToArray();
                 var filledRects = filledPath.Where(p => p.Count == 1 && p[0].IsDrawnAsRectangle).ToArray();
 
@@ -331,10 +354,21 @@
             }
         }
 
-        private static byte ConvertToByte(double componentValue)
+        [Fact]
+        public void Issue724()
         {
-            var rounded = Math.Round(componentValue * 255, MidpointRounding.AwayFromZero);
-            return (byte)rounded;
+            // 11194059_2017-11_de_s
+            var path = IntegrationHelpers.GetDocumentPath("11194059_2017-11_de_s.pdf");
+            using (var document = PdfDocument.Open(path))
+            {
+                // Should not throw an exception.
+                // Fixed an issue in the Type 4 function Copy() StackOperators
+                Page page1 = document.GetPage(1);
+                Assert.NotNull(page1);
+
+                Page page2 = document.GetPage(2);
+                Assert.NotNull(page2);
+            }
         }
     }
 }

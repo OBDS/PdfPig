@@ -1,16 +1,14 @@
 ﻿namespace UglyToad.PdfPig.Graphics.Operations
 {
-    using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using Tokens;
     using Writer;
 
-    /// <inheritdoc />
     /// <summary>
     /// Set the stroking color based on the current color space with support for Pattern, Separation, DeviceN, and ICCBased color spaces.
     /// </summary>
-    public class SetStrokeColorAdvanced : IGraphicsStateOperation
+    public sealed class SetStrokeColorAdvanced : IGraphicsStateOperation
     {
         private static readonly TokenWriter TokenWriter = new TokenWriter();
 
@@ -19,26 +17,28 @@
         /// </summary>
         public const string Symbol = "SCN";
 
+        private readonly double[] operands;
+
         /// <inheritdoc />
         public string Operator => Symbol;
 
         /// <summary>
         /// The values for the color.
         /// </summary>
-        public IReadOnlyList<decimal> Operands { get; }
+        public ReadOnlySpan<double> Operands => operands;
 
         /// <summary>
         /// The name of an entry in the Pattern subdictionary of the current resource dictionary.
         /// </summary>
-        public NameToken PatternName { get; }
+        public NameToken? PatternName { get; }
 
         /// <summary>
         /// Create a new <see cref="SetStrokeColor"/>.
         /// </summary>
         /// <param name="operands">The color operands.</param>
-        public SetStrokeColorAdvanced(IReadOnlyList<decimal> operands)
+        public SetStrokeColorAdvanced(double[] operands)
         {
-            Operands = operands;
+            this.operands = operands;
         }
 
         /// <summary>
@@ -46,16 +46,16 @@
         /// </summary>
         /// <param name="operands">The color operands.</param>
         /// <param name="patternName">The pattern name.</param>
-        public SetStrokeColorAdvanced(IReadOnlyList<decimal> operands, NameToken patternName)
+        public SetStrokeColorAdvanced(double[] operands, NameToken patternName)
+            : this(operands)
         {
-            Operands = operands;
             PatternName = patternName;
         }
 
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            operationContext.GetCurrentState().ColorSpaceContext.SetStrokingColor(Operands, PatternName);
+            operationContext.GetCurrentState().ColorSpaceContext.SetStrokingColor(operands, PatternName);
         }
 
         /// <inheritdoc />
@@ -63,11 +63,11 @@
         {
             foreach (var operand in Operands)
             {
-                stream.WriteDecimal(operand);
+                stream.WriteDouble(operand);
                 stream.WriteWhiteSpace();
             }
 
-            if (PatternName != null)
+            if (PatternName is not null)
             {
                 TokenWriter.WriteToken(PatternName, stream);
             }
@@ -79,9 +79,9 @@
         /// <inheritdoc />
         public override string ToString()
         {
-            var arguments = string.Join(" ", Operands.Select(x => x.ToString("N")));
+            var arguments = string.Join(" ", operands.Select(x => x.ToString("N")));
 
-            if (PatternName != null)
+            if (PatternName is not null)
             {
                 arguments += $" {PatternName}";
             }

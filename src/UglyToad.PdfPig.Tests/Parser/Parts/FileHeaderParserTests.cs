@@ -1,13 +1,10 @@
 ﻿namespace UglyToad.PdfPig.Tests.Parser.Parts
 {
-    using System;
     using Logging;
     using PdfPig.Core;
     using PdfPig.Parser.FileStructure;
     using PdfPig.Tokenization.Scanner;
     using PdfPig.Tokens;
-    using System.Linq;
-    using Xunit;
 
     public class FileHeaderParserTests
     {
@@ -50,7 +47,7 @@
 
             var result = FileHeaderParser.Parse(scanner.scanner, scanner.bytes, false, log);
 
-            Assert.Equal(1.2m, result.Version);
+            Assert.Equal(1.2, result.Version);
             Assert.Equal(TestEnvironment.IsSingleByteNewLine(input) ? 7 : 9, result.OffsetInFile);
         }
 
@@ -73,7 +70,7 @@
 
             var result = FileHeaderParser.Parse(scanner.scanner, scanner.bytes, false, log);
 
-            Assert.Equal(1.2m, result.Version);
+            Assert.Equal(1.2, result.Version);
             Assert.Equal(TestEnvironment.IsSingleByteNewLine(input) ? 12 : 13, result.OffsetInFile);
         }
 
@@ -86,7 +83,7 @@
 
             var result = FileHeaderParser.Parse(scanner.scanner, scanner.bytes, true, log);
 
-            Assert.Equal(1.7m, result.Version);
+            Assert.Equal(1.7, result.Version);
             Assert.Equal(TestEnvironment.IsSingleByteNewLine(input) ? 12 : 13, result.OffsetInFile);
         }
 
@@ -100,7 +97,7 @@ three %PDF-1.6";
 
             var result = FileHeaderParser.Parse(scanner.scanner, scanner.bytes, true, log);
 
-            Assert.Equal(1.6m, result.Version);
+            Assert.Equal(1.6, result.Version);
             Assert.Equal(TestEnvironment.IsSingleByteNewLine(s) ? 14 : 15, result.OffsetInFile);
         }
 
@@ -131,7 +128,7 @@ three %PDF-1.6";
 
             var result = FileHeaderParser.Parse(scanner.scanner, scanner.bytes, true, log);
 
-            Assert.Equal(1.4m, result.Version);
+            Assert.Equal(1.4, result.Version);
         }
 
         [Fact]
@@ -150,13 +147,13 @@ three %PDF-1.6";
         {
             var input = OtherEncodings.StringAsLatin1Bytes("%PDF-1.7\r\n%âãÏÓ\r\n1 0 obj\r\n<</Lang(en-US)>>\r\nendobj");
 
-            var bytes = new ByteArrayInputBytes(input);
+            var bytes = new MemoryInputBytes(input);
 
-            var scanner = new CoreTokenScanner(bytes, true, ScannerScope.None);
+            var scanner = new CoreTokenScanner(bytes, true, new StackDepthGuard(256), ScannerScope.None);
 
             var result = FileHeaderParser.Parse(scanner, bytes, false, log);
 
-            Assert.Equal(1.7m, result.Version);
+            Assert.Equal(1.7, result.Version);
         }
 
         [Fact]
@@ -165,7 +162,7 @@ three %PDF-1.6";
             const string hex =
                 @"00 0F 4A 43 42 31 33 36 36 31 32 32 37 2E 70 64 66 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 50 44 46 20 43 41 52 4F 01 00 FF FF FF FF 00 00 00 00 00 04 DF 28 00 00 00 00 AF 51 7E 82 AF 52 D7 09 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 81 81 03 0D 00 00 25 50 44 46 2D 31 2E 31 0A 25 E2 E3 CF D3 0D 0A 31 20 30 20 6F 62 6A";
 
-            var bytes = hex.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => HexToken.Convert(x[0], x[1]));
+            var bytes = hex.Split(' ').Where(x => x.Length > 0).Select(x => HexToken.ConvertPair(x[0], x[1]));
 
             var str = OtherEncodings.BytesAsLatin1String(bytes.ToArray());
 
@@ -175,7 +172,7 @@ three %PDF-1.6";
 
             Assert.Equal(0, scanner.scanner.CurrentPosition);
             Assert.Equal(128, result.OffsetInFile);
-            Assert.Equal(1.1m, result.Version);
+            Assert.Equal(1.1, result.Version);
             Assert.Equal("PDF-1.1", result.VersionString);
         }
     }

@@ -1,9 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Tests.Graphics.Operations.SpecialGraphicsState
 {
-    using System;
     using PdfPig.Graphics;
     using PdfPig.Graphics.Operations.SpecialGraphicsState;
-    using Xunit;
 
     public class PopTests
     {
@@ -16,7 +14,7 @@
             Assert.Equal("Q", Pop.Value.Operator);
         }
 
-        [Fact]
+        [Fact(Skip = "The stack size check has been moved out of the Pop Operation, and is now in BaseStreamProcessor.PopState().")]
         public void CannotPopWithSingleFrame()
         {
             Action action = () => Pop.Value.Run(context);

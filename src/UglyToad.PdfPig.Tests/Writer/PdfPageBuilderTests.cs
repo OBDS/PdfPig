@@ -1,19 +1,12 @@
 ﻿namespace UglyToad.PdfPig.Tests.Images
 {
-    using System;
-    using System.IO;
-    using System.Linq;
     using UglyToad.PdfPig;
-    using UglyToad.PdfPig.Content;
     using UglyToad.PdfPig.Core;
     using UglyToad.PdfPig.Fonts.Standard14Fonts;
     using UglyToad.PdfPig.Writer;
-    using Xunit;
-
+ 
     public class PdfPageBuilderTests
     {
-
-
         [Fact]
         public void CanAddPng()
         {
@@ -42,9 +35,9 @@
                     var dataPNG = LoadPng("4-16bitRGBA.png");
                     page4.AddPng(dataPNG, new PdfRectangle(0, 0, 595, 842));
                 }
+
                 pdfBytes = pdfBuilder.Build();
             }
-
 
             File.WriteAllBytes(@"PdfPageBuilderTests_CanAddPng.pdf", pdfBytes);
 
@@ -93,10 +86,6 @@
                     Assert.Equal(8, image1.BitsPerComponent);
                 }
             }
-            
-            
-
-
         }
 
 
@@ -245,9 +234,9 @@
 
             var page = pdfBuilder.AddPage(595d, 842d); // A4
             var dataPNG = LoadPng(imageFileName, subfolderName);
-            page.DrawRectangle(borderPlacement, (decimal)imagePlacement.Width, (decimal)imagePlacement.Height, 3, true);
+            page.DrawRectangle(borderPlacement, imagePlacement.Width, imagePlacement.Height, 3, true);
             page.AddPng(dataPNG, imagePlacement);
-            page.AddText(imageFileName, 12m, labelPlacement, font);
+            page.AddText(imageFileName, 12, labelPlacement, font);
         }
 
         private static byte[] LoadPng(string name, string subfolderName = null)

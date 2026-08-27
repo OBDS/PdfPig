@@ -22,12 +22,12 @@
         /// <summary>
         /// The encoding for this font.
         /// </summary>
-        public Encoding Encoding { get; }
+        public Encoding? Encoding { get; }
 
         /// <summary>
         /// The font matrix for this font.
         /// </summary>
-        public TransformationMatrix FontMatrix => TopDictionary.FontMatrix;
+        public TransformationMatrix FontMatrix => TopDictionary.FontMatrix ?? TransformationMatrix.FromValues(0.001, 0, 0, 0.001, 0, 0);
 
         /// <summary>
         /// The value of Weight from the top dictionary or <see langword="null"/>.
@@ -37,7 +37,7 @@
         /// <summary>
         /// The value of Italic Angle from the top dictionary or 0.
         /// </summary>
-        public decimal ItalicAngle => TopDictionary?.ItalicAngle ?? 0;
+        public double ItalicAngle => TopDictionary?.ItalicAngle ?? 0.0;
 
         internal CompactFontFormatFont(CompactFontFormatTopLevelDictionary topDictionary, CompactFontFormatPrivateDictionary privateDictionary,
             ICompactFontFormatCharset charset,
@@ -48,6 +48,42 @@
             Charset = charset;
             CharStrings = charStrings;
             Encoding = fontEncoding;
+        }
+
+        /// <summary>
+        /// Get the character name. Returns <c>null</c> if cannot be processed.
+        /// </summary>
+        public string GetCharacterName(int characterCode, bool isCid)
+        {
+            if (isCid)
+            {
+                if (this is not CompactFontFormatCidFont && !Charset.IsCidCharset)
+                {
+                    return Charset.GetNameByGlyphId(characterCode);
+                }
+
+                return Charset.GetNameByStringId(characterCode);
+            }
+
+            if (Encoding is not null)
+            {
+                return Encoding.GetName(characterCode);
+            }
+
+            if (Charset.IsCidCharset)
+            {
+                return Charset.GetNameByStringId(characterCode);
+            }
+
+            string characterName = GlyphList.AdobeGlyphList.UnicodeCodePointToName(characterCode);
+
+            if (characterName.Equals(GlyphList.NotDefined, StringComparison.OrdinalIgnoreCase))
+            {
+                // BobLD: Not tested
+                return Charset?.GetNameByStringId(characterCode);
+            }
+
+            return characterName;
         }
 
         /// <summary>
@@ -131,7 +167,7 @@
         /// <summary>
         /// Get the default width of x for the character.
         /// </summary>
-        protected virtual decimal GetDefaultWidthX(string characterName)
+        protected virtual double GetDefaultWidthX(string characterName)
         {
             return PrivateDictionary.DefaultWidthX;
         }
@@ -139,13 +175,21 @@
         /// <summary>
         /// Get the nominal width of x for the character.
         /// </summary>
-        protected virtual decimal GetNominalWidthX(string characterName)
+        protected virtual double GetNominalWidthX(string characterName)
         {
             return PrivateDictionary.NominalWidthX;
         }
+
+        /// <summary>
+        /// Get the Font Matrix for the corresponding character name, if available. Return <c>null</c> if not.
+        /// </summary>
+        public virtual TransformationMatrix? GetFontMatrix(string characterName)
+        {
+            return TopDictionary.FontMatrix;
+        }
     }
 
-    internal class CompactFontFormatCidFont : CompactFontFormatFont
+    internal sealed class CompactFontFormatCidFont : CompactFontFormatFont
     {
         public IReadOnlyList<CompactFontFormatTopLevelDictionary> FontDictionaries { get; }
         public IReadOnlyList<CompactFontFormatPrivateDictionary> PrivateDictionaries { get; }
@@ -163,7 +207,7 @@
             FdSelect = fdSelect;
         }
 
-        protected override decimal GetDefaultWidthX(string characterName)
+        protected override double GetDefaultWidthX(string characterName)
         {
             if (!TryGetPrivateDictionaryForCharacter(characterName, out var dictionary))
             {
@@ -173,7 +217,7 @@
             return dictionary.DefaultWidthX;
         }
 
-        protected override decimal GetNominalWidthX(string characterName)
+        protected override double GetNominalWidthX(string characterName)
         {
             if (!TryGetPrivateDictionaryForCharacter(characterName, out var dictionary))
             {
@@ -181,6 +225,30 @@
             }
 
             return dictionary.NominalWidthX;
+        }
+
+        public override TransformationMatrix? GetFontMatrix(string characterName)
+        {
+            bool hasDictionary = TryGetFontDictionaryForCharacter(characterName, out var dictionary);
+
+            if (TopDictionary.FontMatrix.HasValue &&
+                hasDictionary &&
+                dictionary.FontMatrix.HasValue)
+            {
+                return TopDictionary.FontMatrix.Value.Multiply(dictionary.FontMatrix.Value);
+            }
+
+            if (TopDictionary.FontMatrix.HasValue)
+            {
+                return TopDictionary.FontMatrix;
+            }
+
+            if (hasDictionary && dictionary.FontMatrix.HasValue)
+            {
+                return dictionary.FontMatrix;
+            }
+
+            return null;
         }
 
         private bool TryGetPrivateDictionaryForCharacter(string characterName, out CompactFontFormatPrivateDictionary dictionary)
@@ -196,6 +264,23 @@
             }
 
             dictionary = PrivateDictionaries[fd];
+
+            return true;
+        }
+
+        private bool TryGetFontDictionaryForCharacter(string characterName, out CompactFontFormatTopLevelDictionary dictionary)
+        {
+            dictionary = null;
+
+            var glyphId = Charset.GetGlyphIdByName(characterName);
+
+            var fd = FdSelect.GetFontDictionaryIndex(glyphId);
+            if (fd == -1)
+            {
+                return false;
+            }
+
+            dictionary = FontDictionaries[fd];
 
             return true;
         }

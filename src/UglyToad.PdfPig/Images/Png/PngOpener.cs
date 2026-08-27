@@ -1,20 +1,21 @@
 ﻿namespace UglyToad.PdfPig.Images.Png
 {
     using System;
+    using System.Buffers.Binary;
     using System.IO;
     using System.IO.Compression;
     using System.Text;
 
     internal static class PngOpener
     {
-        public static Png Open(Stream stream, IChunkVisitor chunkVisitor = null) => Open(stream, new PngOpenerSettings
+        public static Png Open(Stream stream, IChunkVisitor? chunkVisitor = null) => Open(stream, new PngOpenerSettings
         {
             ChunkVisitor = chunkVisitor
         });
 
         public static Png Open(Stream stream, PngOpenerSettings settings)
         {
-            if (stream == null)
+            if (stream is null)
             {
                 throw new ArgumentNullException(nameof(stream));
             }
@@ -36,7 +37,7 @@
 
             var hasEncounteredImageEnd = false;
 
-            Palette palette = null;
+            Palette? palette = null;
 
             using (var output = new MemoryStream())
             {
@@ -155,7 +156,7 @@
                 return false;
             }
 
-            var length = StreamHelper.ReadBigEndianInt32(headerBytes, 0);
+            var length = BinaryPrimitives.ReadInt32BigEndian(headerBytes.AsSpan(0, 4));
 
             var name = Encoding.ASCII.GetString(headerBytes, 4, 4);
 
@@ -195,8 +196,8 @@
                 throw new InvalidOperationException($"Did not read 4 bytes for the CRC, only found: {read}.");
             }
 
-            var width = StreamHelper.ReadBigEndianInt32(ihdrBytes, 0);
-            var height = StreamHelper.ReadBigEndianInt32(ihdrBytes, 4);
+            var width = BinaryPrimitives.ReadInt32BigEndian(ihdrBytes.AsSpan(0, 4));
+            var height = BinaryPrimitives.ReadInt32BigEndian(ihdrBytes.AsSpan(4, 4));
             var bitDepth = ihdrBytes[8];
             var colorType = ihdrBytes[9];
             var compressionMethod = ihdrBytes[10];

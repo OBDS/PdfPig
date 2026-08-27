@@ -1,9 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Tests.Filters
 {
-    using System.Collections.Generic;
     using PdfPig.Filters;
     using PdfPig.Tokens;
-    using Xunit;
 
     public class RunLengthFilterTests
     {
@@ -26,7 +24,7 @@
                 1, 10, 19
             };
 
-            var decoded = filter.Decode(data, new DictionaryToken(new Dictionary<NameToken, IToken>()), 1);
+            var decoded = filter.Decode(data, new DictionaryToken(new Dictionary<NameToken, IToken>()), TestFilterProvider.Instance, 1);
             
             var expectedResult = new byte[]
             {
@@ -37,7 +35,7 @@
                 10, 19
             };
 
-            Assert.Equal(expectedResult, decoded);
+            Assert.Equal(expectedResult, decoded.ToArray());
         }
 
         [Fact]
@@ -55,7 +53,7 @@
                 90, 6, 7
             };
 
-            var decoded = filter.Decode(data, new DictionaryToken(new Dictionary<NameToken, IToken>()), 0);
+            var decoded = filter.Decode(data, new DictionaryToken(new Dictionary<NameToken, IToken>()), TestFilterProvider.Instance, 0);
 
             var expectedResult = new byte[]
             {
@@ -63,7 +61,7 @@
                 128, 50
             };
 
-            Assert.Equal(expectedResult, decoded);
+            Assert.Equal(expectedResult, decoded.ToArray());
         }
     }
 }

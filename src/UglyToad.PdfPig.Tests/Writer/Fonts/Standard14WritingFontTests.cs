@@ -1,21 +1,14 @@
 ﻿namespace UglyToad.PdfPig.Tests.Writer.Fonts
 {
-    using System;
-
-    using System.Linq;
     using PdfPig.Fonts;
     using PdfPig.Content;
     using UglyToad.PdfPig.Core;
     using UglyToad.PdfPig.Fonts.Standard14Fonts;
     using UglyToad.PdfPig.Writer;
 
-    using Xunit;
     using System.Reflection;
-    using System.Collections.Generic;
     using UglyToad.PdfPig.Fonts.AdobeFontMetrics;
-    using System.IO;
     using System.Diagnostics;
-
 
     public class Standard14WritingFontTests
     {
@@ -38,10 +31,10 @@
                 var point = new PdfPoint(leftX, topPageY);
                 DateTimeStampPage(pdfBuilder, page, point, cm);
                 var letters = page.AddText("Adobe Standard Font ZapfDingbats", 21, point, F2);
-                var newY = topPageY - letters.Select(v => v.GlyphRectangle.Height).Max() * 1.2;
+                var newY = topPageY - letters.Select(v => v.BoundingBox.Height).Max() * 1.2;
                 point = new PdfPoint(leftX, newY);
                 letters = page.AddText("Font Specific encoding in Black (octal) and Unicode in Blue (hex)", 10, point, F2);
-                newY = newY - letters.Select(v => v.GlyphRectangle.Height).Max() * 3;
+                newY = newY - letters.Select(v => v.BoundingBox.Height).Max() * 3;
                 point = new PdfPoint(leftX, newY);
                 var eachRowY = new List<double>();
                 eachRowY.Add(newY); // First row
@@ -223,10 +216,10 @@
                 var point = new PdfPoint(leftX, topPageY);
                 DateTimeStampPage(pdfBuilder, page, point, cm);
                 var letters = page.AddText("Adobe Standard Font Symbol ", 21, point, F2);
-                var newY = topPageY - letters.Select(v => v.GlyphRectangle.Height).Max() * 1.2;
+                var newY = topPageY - letters.Select(v => v.BoundingBox.Height).Max() * 1.2;
                 point = new PdfPoint(leftX, newY);
                 letters = page.AddText("Font Specific encoding in Black (octal), Unicode in Blue (hex), Red only available using Unicode", 10, point, F2);
-                newY = newY - letters.Select(v => v.GlyphRectangle.Height).Max() * 3;
+                newY = newY - letters.Select(v => v.BoundingBox.Height).Max() * 3;
 
 
 
@@ -499,10 +492,10 @@
                     var point = new PdfPoint(leftX, topPageY);
                     DateTimeStampPage(pdfBuilder, page, point, cm);
                     var letters = page.AddText("Adobe Standard Font " + fontName, 21, point, F2);
-                    var newY = topPageY - letters.Select(v => v.GlyphRectangle.Height).Max() * 1.2;
+                    var newY = topPageY - letters.Select(v => v.BoundingBox.Height).Max() * 1.2;
                     point = new PdfPoint(leftX, newY);
                     letters = page.AddText("Font Specific encoding in Black, Unicode in Blue, Red only available using Unicode", 10, point, F2);
-                    newY = newY - letters.Select(v => v.GlyphRectangle.Height).Max() * 3;
+                    newY = newY - letters.Select(v => v.BoundingBox.Height).Max() * 3;
                     point = new PdfPoint(leftX, newY);
 
 
@@ -806,10 +799,10 @@
                 var labelPointSize = 5;
                 var octalString = System.Convert.ToString((int)stringToAdd[0], 8).PadLeft(3, '0');
                 var label = octalString;
-                var codeMidPoint = point.X + letter[0].GlyphRectangle.Width / 2;
+                var codeMidPoint = point.X + letter[0].BoundingBox.Width / 2;
                 var ml = page.MeasureText(label, labelPointSize, point, fontLabel);
-                var labelY = point.Y + ml.Max(v => v.GlyphRectangle.Height) * 0.1 + maxCharacterHeight;
-                var xLabel = codeMidPoint - (ml.Sum(v => v.GlyphRectangle.Width) / 2);
+                var labelY = point.Y + ml.Max(v => v.BoundingBox.Height) * 0.1 + maxCharacterHeight;
+                var xLabel = codeMidPoint - (ml.Sum(v => v.BoundingBox.Width) / 2);
                 var labelPoint = new PdfPoint(xLabel, labelY);
                 page.AddText(label, labelPointSize, labelPoint, fontLabel);
             }
@@ -819,25 +812,25 @@
                 var labelPointSize = 3;
                 var hexString = $"{(int)stringToAdd[0]:X}".PadLeft(4, '0');
                 var label = "0x" + hexString;
-                var codeMidPoint = point.X + letter[0].GlyphRectangle.Width / 2;
+                var codeMidPoint = point.X + letter[0].BoundingBox.Width / 2;
                 var ml = page.MeasureText(label, labelPointSize, point, fontLabel);
-                var labelY = point.Y - ml.Max(v => v.GlyphRectangle.Height) * 2.5;
-                var xLabel = codeMidPoint - (ml.Sum(v => v.GlyphRectangle.Width) / 2);
+                var labelY = point.Y - ml.Max(v => v.BoundingBox.Height) * 2.5;
+                var xLabel = codeMidPoint - (ml.Sum(v => v.BoundingBox.Width) / 2);
                 var labelPoint = new PdfPoint(xLabel, labelY);
                 page.AddText(label, labelPointSize, labelPoint, fontLabel);
             }
 
 
             Assert.NotNull(letter);                         // We should get back something.
-            Assert.Equal(1, letter.Count);                  // There should be only one letter returned after the add operation.
+            Assert.Single(letter);                          // There should be only one letter returned after the add operation.
             Assert.Equal(stringToAdd, letter[0].Value);     // Check we got back the name letter (eg. "v")
                                                             //Debug.WriteLine($"{letter[0]}");
 
             double inch = (page.PageSize.Width / 8.5);
             double cm = inch / 2.54;
 
-            var letterWidth = letter[0].GlyphRectangle.Width * 2;
-            var letterHeight = letter[0].GlyphRectangle.Height * 2;
+            var letterWidth = letter[0].BoundingBox.Width * 2;
+            var letterHeight = letter[0].BoundingBox.Height * 2;
 
             var newX = point.X + maxCharacterWidth * 1.1;
             var newY = point.Y;
@@ -899,7 +892,7 @@
             double maxCharacterWidth;
             {
                 var point = new PdfPoint(10, 10);
-                var characterRectangles = unicodesCharacters.Select(v => page.MeasureText($"{v}", 12m, point, font)[0].GlyphRectangle);
+                var characterRectangles = unicodesCharacters.Select(v => page.MeasureText($"{v}", 12, point, font)[0].BoundingBox);
                 maxCharacterHeight = characterRectangles.Max(v => v.Height);
                 maxCharacterWidth = characterRectangles.Max(v => v.Height);
             }
@@ -922,27 +915,27 @@
             var stampTextUTC = "  UTC: " + DateTime.UtcNow.ToString("yyyy-MMM-dd HH:mm");
             var stampTextLocal = "Local: " + DateTimeOffset.Now.ToString("yyyy-MMM-dd HH:mm zzz");
 
-            const decimal fontSize = 7m;
+            const double fontSize = 7;
 
             var indentFromLeft = page.PageSize.Width - cm;
             {
                 var mtUTC = page.MeasureText(stampTextUTC, fontSize, point, courierFont);
                 var mtlocal = page.MeasureText(stampTextLocal, fontSize, point, courierFont);
-                var widthUTC = mtUTC.Sum(v => v.GlyphRectangle.Width);
-                var widthLocal = mtlocal.Sum(v => v.GlyphRectangle.Width);
+                var widthUTC = mtUTC.Sum(v => v.BoundingBox.Width);
+                var widthLocal = mtlocal.Sum(v => v.BoundingBox.Width);
 
                 indentFromLeft -= Math.Max(widthUTC, widthLocal);
             }
 
             {
                 point = new PdfPoint(indentFromLeft, point.Y);
-                var letters = page.AddText(stampTextUTC, 7m, point, courierFont);
-                var maxHeight = letters.Max(v => v.GlyphRectangle.Height);
+                var letters = page.AddText(stampTextUTC, 7, point, courierFont);
+                var maxHeight = letters.Max(v => v.BoundingBox.Height);
                 point = new PdfPoint(indentFromLeft, point.Y - maxHeight * 1.2);
             }
 
             {
-                var letters = page.AddText(stampTextLocal, 7m, point, courierFont);
+                var letters = page.AddText(stampTextLocal, 7, point, courierFont);
             }
         }
     }

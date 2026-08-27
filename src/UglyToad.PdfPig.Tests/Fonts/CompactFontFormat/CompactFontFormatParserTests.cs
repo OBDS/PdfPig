@@ -1,10 +1,6 @@
 ﻿namespace UglyToad.PdfPig.Tests.Fonts.CompactFontFormat
 {
-    using System;
-    using System.IO;
-    using System.Linq;
     using PdfPig.Fonts.CompactFontFormat;
-    using Xunit;
 
     public class CompactFontFormatParserTests
     {
@@ -16,7 +12,7 @@
             var font = CompactFontFormatParser.Parse(new CompactFontFormatData(fileBytes));
 
             Assert.Equal(1, font.Header.MajorVersion);
-            Assert.Equal(1, font.Fonts.Count);
+            Assert.Single(font.Fonts);
             Assert.True(font.Fonts.ContainsKey("MinionPro-It"));
         }
 
@@ -103,6 +99,52 @@
 
                 Assert.NotNull(path);
             }
+        }
+
+        [Fact]
+        public void CanReadCidFontWithEmptyFontDictionaryInFdArray()
+        {
+            var font = ParseCidFont(SyntheticCidKeyedFont.FirstFontDictionary.Empty);
+
+            // One entry per FDArray entry, in the original order. FDSelect yields the
+            // index into these lists, so an emptied entry has to keep its place rather
+            // than be skipped over.
+            Assert.Equal(2, font.FontDictionaries.Count);
+            Assert.Equal(2, font.PrivateDictionaries.Count);
+
+            Assert.Null(font.FontDictionaries[0].PrivateDictionaryLocation);
+            Assert.NotNull(font.FontDictionaries[1].PrivateDictionaryLocation);
+
+            // What makes a font CID keyed is the presence of the ROS operator, not the
+            // character collection it names, so the fixture uses identifiers of its own.
+            Assert.Equal("Test", font.TopDictionary.CidFontOperators.Ros.Registry);
+            Assert.Equal("Sample", font.TopDictionary.CidFontOperators.Ros.Ordering);
+        }
+
+        [Fact]
+        public void CanReadCidFontWithZeroSizePrivateDictionary()
+        {
+            var font = ParseCidFont(SyntheticCidKeyedFont.FirstFontDictionary.WithZeroSizePrivateDictionary);
+
+            Assert.Equal(2, font.PrivateDictionaries.Count);
+        }
+
+        [Fact]
+        public void CanStillReadCidFontWithPrivateDictionaryInEveryFontDictionary()
+        {
+            var font = ParseCidFont(SyntheticCidKeyedFont.FirstFontDictionary.WithPrivateDictionary);
+
+            Assert.Equal(2, font.PrivateDictionaries.Count);
+            Assert.NotNull(font.FontDictionaries[0].PrivateDictionaryLocation);
+            Assert.NotNull(font.FontDictionaries[1].PrivateDictionaryLocation);
+        }
+
+        private static CompactFontFormatCidFont ParseCidFont(SyntheticCidKeyedFont.FirstFontDictionary first)
+        {
+            var fontSet = CompactFontFormatParser.Parse(
+                new CompactFontFormatData(SyntheticCidKeyedFont.Build(first)));
+
+            return Assert.IsType<CompactFontFormatCidFont>(fontSet.FirstFont);
         }
 
         private static byte[] GetFileBytes(string name)

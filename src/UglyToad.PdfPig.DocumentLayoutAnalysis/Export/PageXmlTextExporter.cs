@@ -10,6 +10,7 @@
     using ReadingOrderDetector;
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Xml;
     using System.Xml.Serialization;
@@ -105,6 +106,9 @@
         /// Get the PAGE-XML (XML) string of the pages layout. Excludes PdfPaths.
         /// </summary>
         /// <param name="page"></param>
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("Members from PageXmlDocument may be trimmed if not referenced directly")]
+#endif
         public string Get(Page page)
         {
             return Get(page, false);
@@ -115,6 +119,9 @@
         /// </summary>
         /// <param name="page"></param>
         /// <param name="includePaths">Draw PdfPaths present in the page.</param>
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("Members from PageXmlDocument may be trimmed if not referenced directly")]
+#endif
         public string Get(Page page, bool includePaths)
         {
             PageXmlData data = new PageXmlData();
@@ -240,7 +247,7 @@
 
             if (includePaths)
             {
-                foreach (var path in page.ExperimentalAccess.Paths)
+                foreach (var path in page.Paths)
                 {
                     var graphicalElement = ToPageXmlLineDrawingRegion(path, data, page.Width, page.Height);
 
@@ -273,7 +280,7 @@
         private PageXmlDocument.PageXmlImageRegion ToPageXmlImageRegion(IPdfImage pdfImage, PageXmlData data, double pageWidth, double pageHeight)
         {
             data.RegionsCount++;
-            var bbox = pdfImage.Bounds;
+            var bbox = pdfImage.BoundingBox;
             return new PageXmlDocument.PageXmlImageRegion()
             {
                 Coords = ToCoords(bbox, pageWidth, pageHeight),
@@ -353,7 +360,7 @@
             data.GlyphsCount++;
             return new PageXmlDocument.PageXmlGlyph()
             {
-                Coords = ToCoords(letter.GlyphRectangle, pageWidth, pageHeight),
+                Coords = ToCoords(letter.BoundingBox, pageWidth, pageHeight),
                 Ligature = false,
                 Production = PageXmlDocument.PageXmlProductionSimpleType.Printed,
                 TextStyle = new PageXmlDocument.PageXmlTextStyle()
@@ -373,6 +380,9 @@
             };
         }
 
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("Members from PageXmlDocument may be trimmed if not referenced directly")]
+#endif
         private string Serialize(PageXmlDocument pageXmlDocument)
         {
             XmlSerializer serializer = new XmlSerializer(typeof(PageXmlDocument));
@@ -395,6 +405,9 @@
         /// <summary>
         /// Deserialize an <see cref="PageXmlDocument"/> from a given PAGE format XML document.
         /// </summary>
+#if NET6_0_OR_GREATER
+        [RequiresUnreferencedCode("Members from PageXmlDocument may be trimmed if not referenced directly")]
+#endif
         public static PageXmlDocument Deserialize(string xmlPath)
         {
             XmlSerializer serializer = new XmlSerializer(typeof(PageXmlDocument));

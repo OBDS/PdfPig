@@ -1,16 +1,19 @@
 ﻿namespace UglyToad.PdfPig.Filters
 {
     using System;
-    using System.Collections.Generic;
     using Tokens;
 
-    internal class DctDecodeFilter : IFilter
+    /// <summary>
+    /// DST (Discrete Cosine Transform) Filter indicates data is encoded in JPEG format.
+    /// <para>This filter is not implemented and will not be used during parsing.</para>
+    /// </summary>
+    public sealed class DctDecodeFilter : IFilter
     {
         /// <inheritdoc />
         public bool IsSupported { get; } = false;
 
         /// <inheritdoc />
-        public byte[] Decode(IReadOnlyList<byte> input, DictionaryToken streamDictionary, int filterIndex)
+        public Memory<byte> Decode(Memory<byte> input, DictionaryToken streamDictionary, IFilterProvider filterProvider, int filterIndex)
         {
             throw new NotSupportedException("The DST (Discrete Cosine Transform) Filter indicates data is encoded in JPEG format. " +
                                             "This filter is not currently supported but the raw data can be supplied to JPEG supporting libraries.");

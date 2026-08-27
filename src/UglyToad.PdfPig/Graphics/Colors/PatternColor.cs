@@ -122,14 +122,14 @@
         /// <summary>
         /// Content containing the painting operators needed to paint one instance of the cell.
         /// </summary>
-        public IReadOnlyList<byte> Data { get; }
+        public ReadOnlyMemory<byte> Data { get; }
 
         /// <summary>
         /// Create a new <see cref="TilingPatternColor"/>.
         /// </summary>
         public TilingPatternColor(TransformationMatrix matrix, DictionaryToken extGState, StreamToken patternStream,
             PatternPaintType paintType, PatternTilingType tilingType, PdfRectangle bbox, double xStep, double yStep,
-            DictionaryToken resources, IReadOnlyList<byte> data)
+            DictionaryToken resources, ReadOnlyMemory<byte> data)
             : base(PatternType.Tiling, patternStream.StreamDictionary, extGState, matrix)
         {
             PatternStream = patternStream;
@@ -143,29 +143,29 @@
         }
 
         /// <inheritdoc />
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (obj is TilingPatternColor color)
-            {
-                return Equals(color);
-            }
-
-            return false;
+            return obj is TilingPatternColor other && Equals(other);
         }
 
         /// <inheritdoc/>
-        public bool Equals(TilingPatternColor other)
+        public bool Equals(TilingPatternColor? other)
         {
+            if (other is null)
+            {
+                return this is null;
+            }
+
             return PatternType.Equals(other.PatternType) &&
                 Matrix.Equals(other.Matrix) &&
-                ExtGState.Equals(other.ExtGState) &&
+                ((ExtGState is null && other.ExtGState is null) || ExtGState?.Equals(other.ExtGState) == true) &&
                 PaintType.Equals(other.PaintType) &&
                 TilingType.Equals(other.TilingType) &&
                 BBox.Equals(other.BBox) &&
                 XStep.Equals(other.XStep) &&
                 YStep.Equals(other.YStep) &&
                 Resources.Equals(other.Resources) &&
-                Data.SequenceEqual(other.Data);
+                Data.Span.SequenceEqual(other.Data.Span);
         }
 
         /// <inheritdoc />
@@ -210,22 +210,22 @@
         }
 
         /// <inheritdoc />
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (obj is ShadingPatternColor color)
-            {
-                return Equals(color);
-            }
-
-            return false;
+            return obj is ShadingPatternColor other && Equals(other);
         }
 
         /// <inheritdoc/>
-        public bool Equals(ShadingPatternColor other)
+        public bool Equals(ShadingPatternColor? other)
         {
+            if (other is null)
+            {
+                return this is null;
+            }
+
             return PatternType.Equals(other.PatternType) &&
                    Matrix.Equals(other.Matrix) &&
-                   ExtGState.Equals(other.ExtGState) &&
+                   ((ExtGState is null && other.ExtGState is null) || ExtGState?.Equals(other.ExtGState) == true) &&
                    Shading.Equals(other.Shading);
         }
 
@@ -245,54 +245,54 @@
     }
 
     /// <summary>
-    /// TODO
+    /// Pattern types.
     /// </summary>
     public enum PatternType : byte
     {
         /// <summary>
-        /// TODO
+        /// Tiling pattern type.
         /// </summary>
         Tiling = 1,
 
         /// <summary>
-        /// TODO
+        /// Shading pattern type.
         /// </summary>
         Shading = 2
     }
 
     /// <summary>
-    /// TODO
+    /// Pattern paint types.
     /// </summary>
     public enum PatternPaintType : byte
     {
         /// <summary>
-        /// TODO
+        /// Coloured pattern paint type.
         /// </summary>
         Coloured = 1,
 
         /// <summary>
-        /// TODO
+        /// Uncoloured pattern paint type.
         /// </summary>
         Uncoloured = 2
     }
 
     /// <summary>
-    /// TODO
+    /// Pattern tiling types.
     /// </summary>
     public enum PatternTilingType : byte
     {
         /// <summary>
-        /// TODO
+        /// Constant spacing pattern tiling type.
         /// </summary>
         ConstantSpacing = 1,
 
         /// <summary>
-        /// TODO
+        /// No distortion pattern tiling type.
         /// </summary>
         NoDistortion = 2,
 
         /// <summary>
-        /// TODO
+        /// Constant spacing faster tiling pattern tiling type.
         /// </summary>
         ConstantSpacingFasterTiling = 3
     }

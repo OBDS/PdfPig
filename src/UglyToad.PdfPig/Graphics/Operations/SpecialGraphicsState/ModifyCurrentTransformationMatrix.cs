@@ -21,15 +21,15 @@
         /// <summary>
         /// The 6 values for the transformation matrix.
         /// </summary>
-        public decimal[] Value { get; }
+        public double[] Value { get; }
 
         /// <summary>
         /// Create a new <see cref="ModifyCurrentTransformationMatrix"/>.
         /// </summary>
         /// <param name="value">The 6 transformation matrix values.</param>
-        public ModifyCurrentTransformationMatrix(decimal[] value)
+        public ModifyCurrentTransformationMatrix(double[] value)
         {
-            if (value == null)
+            if (value is null)
             {
                 throw new ArgumentNullException(nameof(value));
             }
@@ -44,23 +44,23 @@
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            operationContext.ModifyCurrentTransformationMatrix(Array.ConvertAll(Value, x => (double)x));
+            operationContext.ModifyCurrentTransformationMatrix(TransformationMatrix.FromArray(Value));
         }
 
         /// <inheritdoc />
         public void Write(Stream stream)
         {
-            stream.WriteDecimal(Value[0]);
+            stream.WriteDouble(Value[0]);
             stream.WriteWhiteSpace();
-            stream.WriteDecimal(Value[1]);
+            stream.WriteDouble(Value[1]);
             stream.WriteWhiteSpace();
-            stream.WriteDecimal(Value[2]);
+            stream.WriteDouble(Value[2]);
             stream.WriteWhiteSpace();
-            stream.WriteDecimal(Value[3]);
+            stream.WriteDouble(Value[3]);
             stream.WriteWhiteSpace();
-            stream.WriteDecimal(Value[4]);
+            stream.WriteDouble(Value[4]);
             stream.WriteWhiteSpace();
-            stream.WriteDecimal(Value[5]);
+            stream.WriteDouble(Value[5]);
             stream.WriteWhiteSpace();
             stream.WriteText(Symbol);
             stream.WriteNewLine();

@@ -38,8 +38,10 @@ namespace UglyToad.PdfPig.Writer.Xmp
         private const string PdfAIdentificationExtensionPrefix = "pdfaid";
         private const string PdfAIdentificationExtensionNamespace = "http://www.aiim.org/pdfa/ns/id/";
         
-        public static StreamToken GenerateXmpStream(PdfDocumentBuilder.DocumentInformationBuilder builder, decimal version,
-            PdfAStandard standard, XDocument additionalXmpMetadata)
+        public static StreamToken GenerateXmpStream(
+            PdfDocumentBuilder.DocumentInformationBuilder builder, 
+            double version,
+            PdfAStandard standard, XDocument? additionalXmpMetadata)
         {
             XNamespace xmpMeta = XmpMetaNamespace;
             XNamespace rdf = RdfNamespace;
@@ -50,28 +52,25 @@ namespace UglyToad.PdfPig.Writer.Xmp
 
             // Dublin Core Schema
             AddElementsForSchema(rdfDescriptionElement, DublinCorePrefix, DublinCoreNamespace, builder,
-                new List<SchemaMapper>
-                {
+                [
                     new SchemaMapper("format", b => "application/pdf"),
                     new SchemaMapper("creator", b => b.Author),
                     new SchemaMapper("description", b => b.Subject),
                     new SchemaMapper("title", b => b.Title)
-                });
+                ]);
 
             // XMP Basic Schema
             AddElementsForSchema(rdfDescriptionElement, XmpBasicPrefix, XmpBasicNamespace, builder,
-                new List<SchemaMapper>
-                {
+                [
                     new SchemaMapper("CreatorTool", b => b.Creator)
-                });
+                ]);
 
             // Adobe PDF Schema
             AddElementsForSchema(rdfDescriptionElement, AdobePdfPrefix, AdobePdfNamespace, builder,
-                new List<SchemaMapper>
-                {
+                [
                     new SchemaMapper("PDFVersion", b => version.ToString("F1", CultureInfo.InvariantCulture)),
                     new SchemaMapper("Producer", b => b.Producer)
-                });
+                ]);
 
             var pdfAIdContainer = GetVersionAndConformanceLevelIdentificationElement(rdf, emptyRdfAbout, standard);
 
@@ -84,7 +83,7 @@ namespace UglyToad.PdfPig.Writer.Xmp
                         pdfAIdContainer
                     )
                 )
-            ), additionalXmpMetadata);
+            ), additionalXmpMetadata!);
 
             var xml = document.ToString(SaveOptions.None).Replace("\r\n", "\n");
             xml = $"<?xpacket begin=\"\ufeff\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n{xml}\n<?xpacket end=\"r\"?>";
@@ -111,7 +110,7 @@ namespace UglyToad.PdfPig.Writer.Xmp
             {
                 var value = mapper.ValueFunc(builder);
 
-                if (value == null)
+                if (value is null)
                 {
                     continue;
                 }
@@ -226,13 +225,13 @@ namespace UglyToad.PdfPig.Writer.Xmp
             return li;
         }
 
-        private class SchemaMapper
+        private sealed class SchemaMapper
         {
             public string Name { get; }
 
-            public Func<PdfDocumentBuilder.DocumentInformationBuilder, string> ValueFunc { get; }
+            public Func<PdfDocumentBuilder.DocumentInformationBuilder, string?> ValueFunc { get; }
 
-            public SchemaMapper(string name, Func<PdfDocumentBuilder.DocumentInformationBuilder, string> valueFunc)
+            public SchemaMapper(string name, Func<PdfDocumentBuilder.DocumentInformationBuilder, string?> valueFunc)
             {
                 Name = name;
                 ValueFunc = valueFunc;

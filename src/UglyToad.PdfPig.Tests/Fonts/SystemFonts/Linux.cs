@@ -1,11 +1,10 @@
-﻿using System.Collections.Generic;
-using UglyToad.PdfPig.Fonts.SystemFonts;
+﻿using UglyToad.PdfPig.Fonts.SystemFonts;
 using UglyToad.PdfPig.Tests.Dla;
-using Xunit;
 
 namespace UglyToad.PdfPig.Tests.Fonts.SystemFonts
 {
     using PdfPig.Core;
+    using PdfPig.Geometry;
 
     public class Linux
     {
@@ -66,11 +65,14 @@ namespace UglyToad.PdfPig.Tests.Fonts.SystemFonts
 
                     var current = page.Letters[i];
 
-                    Assert.Equal(expectedData.TopLeft.X, current.GlyphRectangle.TopLeft.X, 7);
-                    Assert.Equal(expectedData.TopLeft.Y, current.GlyphRectangle.TopLeft.Y, 7);
-                    Assert.Equal(expectedData.Width, current.GlyphRectangle.Width, 7);
-                    Assert.Equal(expectedData.Height, current.GlyphRectangle.Height, 7);
-                    Assert.Equal(expectedData.Rotation, current.GlyphRectangle.Rotation, 3);
+                    Assert.Equal(expectedData.TopLeft.X, current.BoundingBox.TopLeft.X, 6);
+                    Assert.Equal(expectedData.TopLeft.Y, current.BoundingBox.TopLeft.Y, 6);
+                    Assert.Equal(expectedData.Width, current.BoundingBox.Width, 6);
+                    Assert.Equal(expectedData.Height, current.BoundingBox.Height, 6);
+                    Assert.Equal(expectedData.Rotation, current.BoundingBox.Rotation, 3);
+                    
+                    Assert.True(current.BoundingBox.IntersectsWith(current.GlyphRectangleLoose));
+                    Assert.Equal(current.BoundingBox.Rotation, current.GlyphRectangleLoose.Rotation, 3);
                 }
             }
         }

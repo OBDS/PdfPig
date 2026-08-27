@@ -2,15 +2,15 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using Core;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// The CMap (character code map) maps character codes to character identifiers (CIDs).
     /// The set of characters which a CMap refers to is the "character set" (charset).
     /// </summary>
-    internal class CMap
+    internal sealed class CMap
     {
         public CharacterIdentifierSystemInfo Info { get; }
 
@@ -27,28 +27,23 @@
         /// <summary>
         /// The version number of the CIDFont file.
         /// </summary>
-        [CanBeNull]
-        public string Version { get; }
+        public string? Version { get; }
 
-        [NotNull]
         public IReadOnlyDictionary<int, string> BaseFontCharacterMap { get; }
 
         /// <summary>
         /// Describes the set of valid input character codes.
         /// </summary>
-        [NotNull]
         public IReadOnlyList<CodespaceRange> CodespaceRanges { get; }
 
         /// <summary>
         /// Associates ranges of character codes with their corresponding CID values.
         /// </summary>
-        [NotNull]
         public IReadOnlyList<CidRange> CidRanges { get; }
 
         /// <summary>
         /// Overrides CID mappings for single character codes.
         /// </summary>
-        [NotNull]
         public IReadOnlyDictionary<int, CidCharacterMapping> CidCharacterMappings { get; }
 
         /// <summary>
@@ -67,13 +62,14 @@
         private readonly int minCodeLength = 4;
         private readonly int maxCodeLength;
 
-        public CMap(CharacterIdentifierSystemInfo info, int type, int wMode, string name, string version, 
+        public CMap(CharacterIdentifierSystemInfo info, int type, int wMode, string name,
+            string? version, 
             IReadOnlyDictionary<int, string> baseFontCharacterMap, 
             IReadOnlyList<CodespaceRange> codespaceRanges, 
             IReadOnlyList<CidRange> cidRanges, 
             IReadOnlyList<CidCharacterMapping> cidCharacterMappings)
         {
-            if (cidCharacterMappings == null)
+            if (cidCharacterMappings is null)
             {
                 throw new ArgumentNullException(nameof(cidCharacterMappings));
             }
@@ -114,7 +110,7 @@
         /// <param name="code">Character code</param>
         /// <param name="result">Unicode characters(may be more than one, e.g "fi" ligature)</param>
         /// <returns><see langword="true"/> if this character map contains an entry for this code, <see langword="false"/> otherwise.</returns>
-        public bool TryConvertToUnicode(int code, out string result)
+        public bool TryConvertToUnicode(int code, [NotNullWhen(true)] out string? result)
         {
             var found = BaseFontCharacterMap.TryGetValue(code, out result);
 
@@ -144,19 +140,20 @@
             return 0;
         }
 
-
         public override string ToString()
         {
             return Name;
         }
 
-        public int ReadCode(IInputBytes bytes)
+        public int ReadCode(IInputBytes bytes, bool useLenientParsing)
         {
+            var myPosition = bytes.CurrentOffset;
+
             if (hasEmptyCodespace)
             {
                 var data = new byte[minCodeLength];
                 bytes.Read(data);
-                return data.ToInt(minCodeLength);
+                return ((ReadOnlySpan<byte>)data).Slice(0, minCodeLength).ToInt();
             }
 
             byte[] result = new byte[maxCodeLength];
@@ -170,7 +167,7 @@
                     break;
                 }
 
-                result[i] = ReadByte(bytes);
+                result[i] = ReadByte(bytes, useLenientParsing);
             }
 
             for (int i = minCodeLength - 1; i < maxCodeLength; i++)
@@ -180,38 +177,56 @@
                 {
                     if (range.IsFullMatch(result, byteCount))
                     {
-                        return ByteArrayToInt(result, byteCount);
+                        return ByteArrayToInt(result.AsSpan(0, byteCount));
                     }
                 }
                 if (byteCount < maxCodeLength)
                 {
-                    result[byteCount] = ReadByte(bytes);
+                    result[byteCount] = ReadByte(bytes, useLenientParsing);
                 }
             }
 
-            throw new PdfDocumentFormatException($"CMap is invalid, min code length was {minCodeLength}, max was {maxCodeLength}.");
+            // If we encounter invalid inputs we read min bytes and convert directly to an integer.
+            if (useLenientParsing)
+            {
+                bytes.Seek(myPosition);
+                for (var i = 0; i < minCodeLength; i++)
+                {
+                    result[i] = ReadByte(bytes, useLenientParsing);
+                }
+
+                // https://github.com/apache/pdfbox/blob/f81c7c5a06126db68aa985a0e755cdbffed7d270/fontbox/src/main/java/org/apache/fontbox/cmap/CMap.java#L207
+                return ByteArrayToInt(result.AsSpan(0, minCodeLength));
+            }
+
+            throw new PdfDocumentFormatException($"CMap is invalid, min code length was {minCodeLength}, max was {maxCodeLength}. Bytes: {BitConverter.ToString(result)}.");
         }
 
-        private static byte ReadByte(IInputBytes bytes)
+        private static byte ReadByte(IInputBytes bytes, bool useLenientParsing)
         {
             if (!bytes.MoveNext())
             {
+                if (useLenientParsing)
+                {
+                    // See issue #692
+                    return 0;
+                }
+
                 throw new InvalidOperationException("Read byte called on input bytes which was at end of byte set. Current offset: " + bytes.CurrentOffset);
             }
 
             return bytes.CurrentByte;
         }
 
-        private static int ByteArrayToInt(byte[] data, int dataLen)
+        private static int ByteArrayToInt(ReadOnlySpan<byte> data)
         {
             int code = 0;
-            for (int i = 0; i < dataLen; ++i)
+            for (int i = 0; i < data.Length; ++i)
             {
                 code <<= 8;
                 code |= (data[i] & 0xFF);
             }
             return code;
         }
-
     }
 }

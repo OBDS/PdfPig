@@ -1,5 +1,6 @@
 ﻿namespace UglyToad.PdfPig.Graphics.Colors
 {
+    using System;
     using UglyToad.PdfPig.Core;
     using UglyToad.PdfPig.Functions;
     using UglyToad.PdfPig.Tokens;
@@ -35,7 +36,7 @@
         /// the shading, to fill those portions of the area to be painted
         /// that lie outside the bounds of the shading object.
         /// </summary>
-        public double[] Background { get; }
+        public double[]? Background { get; }
 
         /// <summary>
         /// The shading's bounding box. The coordinates shall be interpreted
@@ -62,7 +63,7 @@
         /// Create a new <see cref="Shading"/>.
         /// </summary>
         protected internal Shading(ShadingType shadingType, bool antiAlias, DictionaryToken shadingDictionary,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background)
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background)
         {
             ShadingType = shadingType;
             AntiAlias = antiAlias;
@@ -75,36 +76,85 @@
         /// <summary>
         /// The shading's function(s), if any.
         /// </summary>
-        public abstract PdfFunction[] Functions { get; }
+        public abstract PdfFunction[]? Functions { get; }
 
         /// <summary>
         /// Convert the input values using the functions of the shading.
         /// </summary>
         public double[] Eval(params double[] input)
         {
-            if (Functions == null || Functions.Length == 0)
+            PdfFunction[]? functions = Functions;
+            if (functions is null || functions.Length == 0)
             {
+                // No functions: caller-owned input values are returned unchanged (matches legacy behaviour).
+                Clamp(input);
                 return input;
             }
-            else if (Functions.Length == 1)
-            {
-                return Clamp(Functions[0].Eval(input));
-            }
 
-            double[] returnValues = new double[Functions.Length];
-            for (int i = 0; i < Functions.Length; i++)
+            int outputLength = functions.Length == 1 ? functions[0].MaxOutputComponentCount : functions.Length;
+            double[] result = new double[outputLength];
+            int written = Eval(input, result);
+            if (written == result.Length)
             {
-                double[] newValue = Functions[i].Eval(input);
-                returnValues[i] = newValue[0]; // 1-out functions
+                return result;
             }
-            return Clamp(returnValues);
+            double[] trimmed = new double[written];
+            Array.Copy(result, trimmed, written);
+            return trimmed;
         }
 
-        private static double[] Clamp(double[] input)
+        /// <summary>
+        /// Convert the input values using the functions of the shading, writing the result
+        /// into the supplied output buffer. Allocation-free for the typical 1-function and
+        /// multi-function fan-out paths.
+        /// </summary>
+        /// <param name="input">The function input values.</param>
+        /// <param name="output">The output buffer. Must be at least as large as the number of values written.</param>
+        /// <returns>The number of output values written.</returns>
+        public int Eval(ReadOnlySpan<double> input, Span<double> output)
         {
-            // From the PDF spec:
-            // "If the value returned by the function for a given colour component 
-            // is out of range, it shall be adjusted to the nearest valid value."
+            PdfFunction[]? functions = Functions;
+            if (functions is null || functions.Length == 0)
+            {
+                input.CopyTo(output);
+                Clamp(output.Slice(0, input.Length));
+                return input.Length;
+            }
+            if (functions.Length == 1)
+            {
+                int written = functions[0].Eval(input, output);
+                Clamp(output.Slice(0, written));
+                return written;
+            }
+
+            // Multi-function fan-out: each function is 1-out, we take the first value of each.
+            // Use a small stackalloc buffer reused across function calls.
+            Span<double> buffer = stackalloc double[8];
+            for (int i = 0; i < functions.Length; i++)
+            {
+                int outLen = functions[i].MaxOutputComponentCount;
+                if (outLen > buffer.Length)
+                {
+                    // Pathological case — fall back to a heap allocation just for this function.
+                    double[] big = new double[outLen];
+                    functions[i].Eval(input, big);
+                    output[i] = big[0];
+                }
+                else
+                {
+                    functions[i].Eval(input, buffer);
+                    output[i] = buffer[0];
+                }
+            }
+            Clamp(output.Slice(0, functions.Length));
+            return functions.Length;
+        }
+
+        // From the PDF spec:
+        // "If the value returned by the function for a given colour component
+        // is out of range, it shall be adjusted to the nearest valid value."
+        private static void Clamp(Span<double> input)
+        {
             for (int i = 0; i < input.Length; ++i)
             {
                 if (input[i] < 0)
@@ -116,7 +166,6 @@
                     input[i] = 1;
                 }
             }
-            return input;
         }
     }
 
@@ -157,7 +206,7 @@
         /// Create a new <see cref="FunctionBasedShading"/>.
         /// </summary>
         public FunctionBasedShading(bool antiAlias, DictionaryToken shadingDictionary,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background, double[] domain,
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background, double[] domain,
             TransformationMatrix matrix, PdfFunction[] functions)
             : base(ShadingType.FunctionBased, antiAlias, shadingDictionary, colorSpace, bbox, background)
         {
@@ -207,7 +256,7 @@
         /// Create a new <see cref="AxialShading"/>.
         /// </summary>
         public AxialShading(bool antiAlias, DictionaryToken shadingDictionary,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
             double[] coords, double[] domain, PdfFunction[] functions, bool[] extend)
             : base(ShadingType.Axial, antiAlias, shadingDictionary, colorSpace, bbox, background)
         {
@@ -267,7 +316,7 @@
         /// Create a new <see cref="RadialShading"/>.
         /// </summary>
         public RadialShading(bool antiAlias, DictionaryToken shadingDictionary,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
             double[] coords, double[] domain, PdfFunction[] functions, bool[] extend)
             : base(ShadingType.Radial, antiAlias, shadingDictionary, colorSpace, bbox, background)
         {
@@ -327,14 +376,19 @@
         /// to the nearest valid value.
         /// This entry shall not be used with an Indexed colour space.
         /// </summary>
-        public override PdfFunction[] Functions { get; }
+        public override PdfFunction[]? Functions { get; }
+
+        /// <summary>
+        /// The decoded stream data containing descriptive data characterizing the shading's gradient fill.
+        /// </summary>
+        public Memory<byte> Data { get; }
 
         /// <summary>
         /// Create a new <see cref="FreeFormGouraudShading"/>.
         /// </summary>
         public FreeFormGouraudShading(bool antiAlias, StreamToken shadingStream,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
-            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[] functions)
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
+            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[]? functions)
             : base(ShadingType.FreeFormGouraud, antiAlias, shadingStream.StreamDictionary, colorSpace, bbox, background)
         {
             BitsPerCoordinate = bitsPerCoordinate;
@@ -342,6 +396,7 @@
             BitsPerFlag = bitsPerFlag;
             Decode = decode;
             Functions = functions;
+            Data = shadingStream.Data;
         }
     }
 
@@ -390,14 +445,19 @@
         /// component is out of range, it shall be adjusted to the nearest valid value.
         /// This entry shall not be used with an Indexed colour space.
         /// </summary>
-        public override PdfFunction[] Functions { get; }
+        public override PdfFunction[]? Functions { get; }
+
+        /// <summary>
+        /// The decoded stream data containing descriptive data characterizing the shading's gradient fill.
+        /// </summary>
+        public Memory<byte> Data { get; }
 
         /// <summary>
         /// Create a new <see cref="LatticeFormGouraudShading"/>.
         /// </summary>
         public LatticeFormGouraudShading(bool antiAlias, StreamToken shadingStream,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
-            int bitsPerCoordinate, int bitsPerComponent, int verticesPerRow, double[] decode, PdfFunction[] functions)
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
+            int bitsPerCoordinate, int bitsPerComponent, int verticesPerRow, double[] decode, PdfFunction[]? functions)
             : base(ShadingType.LatticeFormGouraud, antiAlias, shadingStream.StreamDictionary, colorSpace, bbox, background)
         {
             BitsPerCoordinate = bitsPerCoordinate;
@@ -405,6 +465,7 @@
             VerticesPerRow = verticesPerRow;
             Decode = decode;
             Functions = functions;
+            Data = shadingStream.Data;
         }
     }
 
@@ -455,14 +516,19 @@
         /// shall be adjusted to the nearest valid value.
         /// This entry shall not be used with an Indexed colour space.
         /// </summary>
-        public override PdfFunction[] Functions { get; }
+        public override PdfFunction[]? Functions { get; }
+
+        /// <summary>
+        /// The decoded stream data containing descriptive data characterizing the shading's gradient fill.
+        /// </summary>
+        public Memory<byte> Data { get; }
 
         /// <summary>
         /// Create a new <see cref="CoonsPatchMeshesShading"/>.
         /// </summary>
         public CoonsPatchMeshesShading(bool antiAlias, StreamToken shadingStream,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
-            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[] functions)
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
+            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[]? functions)
             : base(ShadingType.CoonsPatch, antiAlias, shadingStream.StreamDictionary, colorSpace, bbox, background)
         {
             BitsPerCoordinate = bitsPerCoordinate;
@@ -470,6 +536,7 @@
             BitsPerFlag = bitsPerFlag;
             Decode = decode;
             Functions = functions;
+            Data = shadingStream.Data;
         }
     }
 
@@ -520,14 +587,19 @@
         /// shall be adjusted to the nearest valid value.
         /// This entry shall not be used with an Indexed colour space.
         /// </summary>
-        public override PdfFunction[] Functions { get; }
+        public override PdfFunction[]? Functions { get; }
+
+        /// <summary>
+        /// The decoded stream data containing descriptive data characterizing the shading's gradient fill.
+        /// </summary>
+        public Memory<byte> Data { get; }
 
         /// <summary>
         /// Create a new <see cref="TensorProductPatchMeshesShading"/>.
         /// </summary>
         public TensorProductPatchMeshesShading(bool antiAlias, StreamToken shadingStream,
-            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[] background,
-            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[] functions)
+            ColorSpaceDetails colorSpace, PdfRectangle? bbox, double[]? background,
+            int bitsPerCoordinate, int bitsPerComponent, int bitsPerFlag, double[] decode, PdfFunction[]? functions)
             : base(ShadingType.TensorProductPatch, antiAlias, shadingStream.StreamDictionary, colorSpace, bbox, background)
         {
             BitsPerCoordinate = bitsPerCoordinate;
@@ -535,6 +607,7 @@
             BitsPerFlag = bitsPerFlag;
             Decode = decode;
             Functions = functions;
+            Data = shadingStream.Data;
         }
     }
 

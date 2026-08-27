@@ -1,16 +1,17 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Parser
 {
     using System;
+    using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.IO;
     using System.Linq;
     using Cmap;
     using Core;
     using Parts;
-    using System.Collections.Generic;
     using Tokenization.Scanner;
     using Tokens;
 
-    internal class CMapParser
+    internal sealed class CMapParser
     {
         private static readonly BaseFontRangeParser BaseFontRangeParser = new BaseFontRangeParser();
         private static readonly BaseFontCharacterParser BaseFontCharacterParser = new BaseFontCharacterParser();
@@ -19,18 +20,21 @@
         private static readonly CodespaceRangeParser CodespaceRangeParser = new CodespaceRangeParser();
         private static readonly CidCharacterParser CidCharacterParser = new CidCharacterParser();
 
-        public CMap Parse(IInputBytes inputBytes)
+        public CMap Parse(IInputBytes inputBytes, StackDepthGuard stackDepthGuard)
         {
             var scanner = new CoreTokenScanner(inputBytes,
                 false,
+                stackDepthGuard,
                 namedDictionaryRequiredKeys: new Dictionary<NameToken, IReadOnlyList<NameToken>>
                 {
                     { NameToken.CidSystemInfo, new[] { NameToken.Registry, NameToken.Ordering, NameToken.Supplement } }
-                });
+                },
+                // Malformed CMaps may omit the whitespace mandated between tokens (see #1331 and PDFBOX-2035).
+                isCMapParser: true);
 
             var builder = new CharacterMapBuilder();
 
-            IToken previousToken = null;
+            IToken? previousToken = null;
             while (scanner.MoveNext())
             {
                 var token = scanner.CurrentToken;
@@ -41,7 +45,7 @@
                     {
                         case "usecmap":
                             {
-                                if (previousToken is NameToken name && TryParseExternal(name.Data, out var external))
+                                if (previousToken is NameToken name && TryParseExternal(name.Data, stackDepthGuard, out var external))
                                 {
                                     builder.UseCMap(external);
                                 }
@@ -124,7 +128,7 @@
             return builder.Build();
         }
 
-        public bool TryParseExternal(string name, out CMap result)
+        public bool TryParseExternal(string name, StackDepthGuard stackDepthGuard, [NotNullWhen(true)] out CMap? result)
         {
             result = null;
 
@@ -133,15 +137,15 @@
             var resource = resources.FirstOrDefault(x =>
                 x.EndsWith("CMap." + name, StringComparison.InvariantCultureIgnoreCase));
 
-            if (resource == null)
+            if (resource is null)
             {
                 return false;
             }
 
-            byte[] bytes;
+            ReadOnlyMemory<byte> bytes;
             using (var stream = typeof(CMapParser).Assembly.GetManifestResourceStream(resource))
             {
-                if (stream == null)
+                if (stream is null)
                 {
                     return false;
                 }
@@ -149,12 +153,11 @@
                 using (var memoryStream = new MemoryStream())
                 {
                     stream.CopyTo(memoryStream);
-
-                    bytes = memoryStream.ToArray();
+                    bytes = memoryStream.AsMemory();
                 }
             }
 
-            result = Parse(new ByteArrayInputBytes(bytes));
+            result = Parse(new MemoryInputBytes(bytes), stackDepthGuard);
 
             return true;
         }

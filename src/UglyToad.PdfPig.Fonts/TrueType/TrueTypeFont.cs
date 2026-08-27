@@ -5,11 +5,12 @@
     using Core;
     using Parser;
     using Tables.CMapSubTables;
+    using UglyToad.PdfPig.Fonts.CompactFontFormat;
 
     /// <summary>
     /// A TrueType font.
     /// </summary>
-    public class TrueTypeFont
+    public sealed class TrueTypeFont
     {
         /// <summary>
         /// The font version number.
@@ -54,17 +55,33 @@
         /// </summary>
         public int NumberOfTables { get; }
 
+        // TODO - It would be better to use 'PdfCidCompactFontFormatFont' but the class is not accessible from here.
+        private readonly CompactFontFormatFontCollection? cffFontCollection;
+
         /// <summary>
         /// Create a new <see cref="TrueTypeFont"/>.
         /// </summary>
-        internal TrueTypeFont(float version, IReadOnlyDictionary<string, TrueTypeHeaderTable> tableHeaders, TableRegister tableRegister)
+        internal TrueTypeFont(float version, IReadOnlyDictionary<string, TrueTypeHeaderTable> tableHeaders, TableRegister tableRegister, CompactFontFormatFontCollection? cffFontCollection)
         {
             Version = version;
             TableHeaders = tableHeaders ?? throw new ArgumentNullException(nameof(tableHeaders));
             TableRegister = tableRegister ?? throw new ArgumentNullException(nameof(tableRegister));
             NumberOfTables = tableHeaders.Count;
 
-            if (TableRegister.CMapTable != null)
+            /*
+             * The presence of a CFF (Compact Font Format) table in a TrueType font creates a hybrid situation where the font
+             * container uses TrueType structure but contains PostScript-based glyph descriptions. According to the OpenType
+             * specification, when a TrueType font contains a CFF table instead of a traditional glyf table, it indicates
+             * "an OpenType font with PostScript outlines". This creates what's known as an OpenType CFF font, which uses
+             * PostScript Type 2 charstrings for glyph descriptions rather than TrueType quadratic curves.
+             *
+             * This is to fix P2P-33713919.pdf
+             * See https://github.com/BobLd/PdfPig.Rendering.Skia/issues/46
+             * TODO - Add test coverage and need to review if the logic belongs here
+             */
+            this.cffFontCollection = cffFontCollection;
+
+            if (TableRegister.CMapTable is not null)
             {
                 const int encodingSymbol = 0;
                 const int encodingUnicode = 1;
@@ -72,19 +89,19 @@
 
                 foreach (var subTable in TableRegister.CMapTable.SubTables)
                 {
-                    if (WindowsSymbolCMap == null
+                    if (WindowsSymbolCMap is null
                         && subTable.PlatformId == TrueTypeCMapPlatform.Windows
                         && subTable.EncodingId == encodingSymbol)
                     {
                         WindowsSymbolCMap = subTable;
                     }
-                    else if (WindowsUnicodeCMap == null
+                    else if (WindowsUnicodeCMap is null
                              && subTable.PlatformId == TrueTypeCMapPlatform.Windows
                              && subTable.EncodingId == encodingUnicode)
                     {
                         WindowsUnicodeCMap = subTable;
                     }
-                    else if (MacRomanCMap == null
+                    else if (MacRomanCMap is null
                              && subTable.PlatformId == TrueTypeCMapPlatform.Macintosh
                              && subTable.EncodingId == encodingMacRoman)
                     {
@@ -107,8 +124,47 @@
         {
             boundingBox = default(PdfRectangle);
 
-            if (!TryGetGlyphIndex(characterCode, characterCodeToGlyphId, out var index)
-                || TableRegister.GlyphTable == null)
+            if (TableRegister.GlyphTable is null)
+            {
+                if (cffFontCollection is not null)
+                {
+                    /*
+                     * The presence of a CFF (Compact Font Format) table in a TrueType font creates a hybrid situation where the font
+                     * container uses TrueType structure but contains PostScript-based glyph descriptions. According to the OpenType
+                     * specification, when a TrueType font contains a CFF table instead of a traditional glyf table, it indicates
+                     * "an OpenType font with PostScript outlines". This creates what's known as an OpenType CFF font, which uses
+                     * PostScript Type 2 charstrings for glyph descriptions rather than TrueType quadratic curves.
+                     *
+                     * This is to fix P2P-33713919.pdf
+                     * See https://github.com/BobLd/PdfPig.Rendering.Skia/issues/46
+                     *
+                     * When used as a CIDFont the CID is first mapped to a glyph index via the supplied
+                     * mapping (the CIDToGIDMap, or Identity when none), then resolved by glyph id in the
+                     * embedded CFF (see CompactFontFormatFont.GetCharacterName).
+                     *
+                     * See https://github.com/UglyToad/PdfPig/issues/1320
+                     */
+
+                    var cffFont = cffFontCollection.FirstFont;
+                    int cffGlyphId = characterCodeToGlyphId?.Invoke(characterCode) ?? characterCode;
+                    var name = cffFont.GetCharacterName(cffGlyphId, true);
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        return false;
+                    }
+
+                    var bbox = cffFont.GetCharacterBoundingBox(name);
+                    if (bbox.HasValue)
+                    {
+                        boundingBox = bbox.Value;
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (!TryGetGlyphIndex(characterCode, characterCodeToGlyphId, out var index))
             {
                 return false;
             }
@@ -137,10 +193,44 @@
         /// </summary>
         public bool TryGetPath(int characterCode, Func<int, int?> characterCodeToGlyphId, out IReadOnlyList<PdfSubpath> path)
         {
-            path = EmptyArray<PdfSubpath>.Instance;
+            path = null;
 
-            if (!TryGetGlyphIndex(characterCode, characterCodeToGlyphId, out var index)
-                || TableRegister.GlyphTable == null)
+            if (TableRegister.GlyphTable is null)
+            {
+                if (cffFontCollection is not null)
+                {
+                    /*
+                     * The presence of a CFF (Compact Font Format) table in a TrueType font creates a hybrid situation where the font
+                     * container uses TrueType structure but contains PostScript-based glyph descriptions. According to the OpenType
+                     * specification, when a TrueType font contains a CFF table instead of a traditional glyf table, it indicates
+                     * "an OpenType font with PostScript outlines". This creates what's known as an OpenType CFF font, which uses
+                     * PostScript Type 2 charstrings for glyph descriptions rather than TrueType quadratic curves.
+                     *
+                     * This is to fix P2P-33713919.pdf
+                     * See https://github.com/BobLd/PdfPig.Rendering.Skia/issues/46
+                     *
+                     * When used as a CIDFont the CID is first mapped to a glyph index via the supplied
+                     * mapping (the CIDToGIDMap, or Identity when none), then resolved by glyph id in the
+                     * embedded CFF (see CompactFontFormatFont.GetCharacterName).
+                     *
+                     * See https://github.com/UglyToad/PdfPig/issues/1320
+                     */
+
+                    var cffFont = cffFontCollection.FirstFont;
+                    int cffGlyphId = characterCodeToGlyphId?.Invoke(characterCode) ?? characterCode;
+                    var name = cffFont.GetCharacterName(cffGlyphId, true);
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        return false;
+                    }
+
+                    return cffFont.TryGetPath(name, out path);
+                }
+
+                return false;
+            }
+
+            if (!TryGetGlyphIndex(characterCode, characterCodeToGlyphId, out var index))
             {
                 return false;
             }
@@ -180,7 +270,7 @@
         {
             width = 0;
 
-            if (TableRegister.HorizontalMetricsTable == null)
+            if (TableRegister.HorizontalMetricsTable is null)
             {
                 return false;
             }
@@ -202,7 +292,7 @@
                 return true;
             }
 
-            if (TableRegister.CMapTable == null)
+            if (TableRegister.CMapTable is null)
             {
                 return false;
             }

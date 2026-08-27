@@ -2,16 +2,19 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
+    using System.Linq;
     using Core;
     using Graphics.Colors;
     using Parser.Parts;
     using PdfFonts;
+    using Logging;
     using Tokenization.Scanner;
     using Tokens;
     using Filters;
     using Util;
 
-    internal class ResourceStore : IResourceStore
+    internal sealed class ResourceStore : IResourceStore
     {
         private readonly IPdfTokenScanner scanner;
         private readonly IFontFactory fontFactory;
@@ -20,20 +23,33 @@
 
         private readonly Dictionary<IndirectReference, IFont> loadedFonts = new Dictionary<IndirectReference, IFont>();
         private readonly Dictionary<NameToken, IFont> loadedDirectFonts = new Dictionary<NameToken, IFont>();
-        private readonly StackDictionary<NameToken, IndirectReference> currentResourceState = new StackDictionary<NameToken, IndirectReference>();
+        private readonly StackDictionary<NameToken, IndirectReference> currentFontState = new StackDictionary<NameToken, IndirectReference>();
+        private readonly StackDictionary<NameToken, IndirectReference> currentXObjectState = new StackDictionary<NameToken, IndirectReference>();
 
-        private readonly Dictionary<NameToken, DictionaryToken> extendedGraphicsStates = new Dictionary<NameToken, DictionaryToken>();
+        private readonly StackDictionary<NameToken, DictionaryToken> extendedGraphicsStates = new StackDictionary<NameToken, DictionaryToken>();
 
         private readonly StackDictionary<NameToken, ResourceColorSpace> namedColorSpaces = new StackDictionary<NameToken, ResourceColorSpace>();
         private readonly Dictionary<NameToken, ColorSpaceDetails> loadedNamedColorSpaceDetails = new Dictionary<NameToken, ColorSpaceDetails>();
+        private readonly Dictionary<(NameToken? Name, IToken ColorSpace), ColorSpaceDetails> loadedColorSpaceDetailsCache = new Dictionary<(NameToken?, IToken), ColorSpaceDetails>();
 
-        private readonly Dictionary<NameToken, DictionaryToken> markedContentProperties = new Dictionary<NameToken, DictionaryToken>();
+        private readonly StackDictionary<NameToken, DictionaryToken> markedContentProperties = new StackDictionary<NameToken, DictionaryToken>();
 
-        private readonly Dictionary<NameToken, Shading> shadingsProperties = new Dictionary<NameToken, Shading>();
+        private readonly StackDictionary<NameToken, Shading> shadingsProperties = new StackDictionary<NameToken, Shading>();
 
-        private readonly Dictionary<NameToken, PatternColor> patternsProperties = new Dictionary<NameToken, PatternColor>();
+        private readonly StackDictionary<NameToken, PatternColor> patternsProperties = new StackDictionary<NameToken, PatternColor>();
+        
+        private readonly Dictionary<DictionaryToken, ResolvedResources> resolvedResources = new();
 
-        private (NameToken name, IFont font) lastLoadedFont;
+        // 8.6.5.6: while a DefaultGray/RGB/CMYK substitution is being resolved, any device colour space
+        // encountered inside the substitute's own definition refers to the genuine device space and shall
+        // NOT be substituted again. This mirrors PDFBox's 'wasDefault' flag and breaks otherwise-infinite
+        // recursion for a default whose definition references the same device space, e.g.
+        // /DefaultCMYK [ /DeviceN [ ... ] /DeviceCMYK <tint function> ].
+        private bool isResolvingDefaultSubstitute;
+
+        private (NameToken? name, IFont? font) lastLoadedFont;
+
+        public ILog Logger => parsingOptions.Logger;
 
         public ResourceStore(IPdfTokenScanner scanner,
             IFontFactory fontFactory,
@@ -50,15 +66,52 @@
         {
             lastLoadedFont = (null, null);
             loadedNamedColorSpaceDetails.Clear();
+            loadedColorSpaceDetailsCache.Clear();
 
-            namedColorSpaces.Push();
-            currentResourceState.Push();
+            if (!resolvedResources.TryGetValue(resourceDictionary, out var resolved))
+            {
+                resolved = ResolveResources(resourceDictionary);
+                resolvedResources[resourceDictionary] = resolved;
+            }
+
+            namedColorSpaces.Push(resolved.NamedColorSpaces);
+            currentFontState.Push(resolved.Fonts);
+            currentXObjectState.Push(resolved.XObjects);
+            extendedGraphicsStates.Push(resolved.ExtendedGraphicsStates);
+            markedContentProperties.Push(resolved.MarkedContentProperties);
+            shadingsProperties.Push();
+            patternsProperties.Push();
+
+            // Fonts given inline rather than by indirect reference are keyed by name in a store shared
+            // across resource dictionaries, so their binding is re-established on every load. The font
+            // itself was parsed when this dictionary was first resolved.
+            for (var i = 0; i < resolved.DirectFonts.Count; i++)
+            {
+                var directFont = resolved.DirectFonts[i];
+                loadedDirectFonts[directFont.Name] = directFont.Font;
+            }
+
+            // Patterns and shadings resolve their colour spaces through the resource stack, so unlike the
+            // categories above their result depends on the levels below this one and cannot be cached
+            // against the resource dictionary alone.
+            LoadPatterns(resourceDictionary);
+            LoadShadings(resourceDictionary);
+        }
+
+        private ResolvedResources ResolveResources(DictionaryToken resourceDictionary)
+        {
+            var fonts = new Dictionary<NameToken, IndirectReference>();
+            var directFonts = new List<(NameToken Name, IFont Font)>();
+            var xObjects = new Dictionary<NameToken, IndirectReference>();
+            var extendedGraphicsStateDictionaries = new Dictionary<NameToken, DictionaryToken>();
+            var colorSpaces = new Dictionary<NameToken, ResourceColorSpace>();
+            var properties = new Dictionary<NameToken, DictionaryToken>();
 
             if (resourceDictionary.TryGet(NameToken.Font, out var fontBase))
             {
                 var fontDictionary = DirectObjectFinder.Get<DictionaryToken>(fontBase, scanner);
 
-                LoadFontDictionary(fontDictionary);
+                LoadFontDictionary(fontDictionary, fonts, directFonts);
             }
 
             if (resourceDictionary.TryGet(NameToken.Xobject, out var xobjectBase))
@@ -77,32 +130,32 @@
                         throw new InvalidOperationException($"Expected the XObject dictionary value for key /{pair.Key} to be an indirect reference, instead got: {pair.Value}.");
                     }
 
-                    currentResourceState[NameToken.Create(pair.Key)] = reference.Data;
+                    xObjects[NameToken.Create(pair.Key)] = reference.Data;
                 }
             }
 
-            if (resourceDictionary.TryGet(NameToken.ExtGState, scanner, out DictionaryToken extGStateDictionaryToken))
+            if (resourceDictionary.TryGet(NameToken.ExtGState, scanner, out DictionaryToken? extGStateDictionaryToken))
             {
                 foreach (var pair in extGStateDictionaryToken.Data)
                 {
                     var name = NameToken.Create(pair.Key);
                     var state = DirectObjectFinder.Get<DictionaryToken>(pair.Value, scanner);
 
-                    extendedGraphicsStates[name] = state;
+                    extendedGraphicsStateDictionaries[name] = state;
                 }
             }
 
-            if (resourceDictionary.TryGet(NameToken.ColorSpace, scanner, out DictionaryToken colorSpaceDictionary))
+            if (resourceDictionary.TryGet(NameToken.ColorSpace, scanner, out DictionaryToken? colorSpaceDictionary))
             {
                 foreach (var nameColorSpacePair in colorSpaceDictionary.Data)
                 {
                     var name = NameToken.Create(nameColorSpacePair.Key);
 
-                    if (DirectObjectFinder.TryGet(nameColorSpacePair.Value, scanner, out NameToken colorSpaceName))
+                    if (DirectObjectFinder.TryGet(nameColorSpacePair.Value, scanner, out NameToken? colorSpaceName))
                     {
-                        namedColorSpaces[name] = new ResourceColorSpace(colorSpaceName);
+                        colorSpaces[name] = new ResourceColorSpace(colorSpaceName);
                     }
-                    else if (DirectObjectFinder.TryGet(nameColorSpacePair.Value, scanner, out ArrayToken colorSpaceArray))
+                    else if (DirectObjectFinder.TryGet(nameColorSpacePair.Value, scanner, out ArrayToken? colorSpaceArray))
                     {
                         if (colorSpaceArray.Length == 0)
                         {
@@ -116,7 +169,14 @@
                             throw new PdfDocumentFormatException($"Invalid ColorSpace array encountered in page resource dictionary: {colorSpaceArray}.");
                         }
 
-                        namedColorSpaces[name] = new ResourceColorSpace(arrayNamedColorSpace, colorSpaceArray);
+                        colorSpaces[name] = new ResourceColorSpace(arrayNamedColorSpace, colorSpaceArray);
+                    }
+                    else if (parsingOptions.UseLenientParsing &&
+                             DirectObjectFinder.TryGet(nameColorSpacePair.Value, scanner, out DictionaryToken? dict) &&
+                             dict.TryGet(NameToken.ColorSpace, scanner, out NameToken? csName))
+                    {
+                        // See issue #1061
+                        colorSpaces[name] = new ResourceColorSpace(csName);
                     }
                     else
                     {
@@ -125,50 +185,62 @@
                 }
             }
 
-            if (resourceDictionary.TryGet(NameToken.Pattern, scanner, out DictionaryToken patternDictionary))
-            {
-                // NB: in PDF, all patterns shall be local to the context in which they are defined.
-                foreach (var namePatternPair in patternDictionary.Data)
-                {
-                    var name = NameToken.Create(namePatternPair.Key);
-                    patternsProperties[name] = PatternParser.Create(namePatternPair.Value, scanner, this, filterProvider);
-                }
-            }
-
-            if (resourceDictionary.TryGet(NameToken.Properties, scanner, out DictionaryToken markedContentPropertiesList))
+            if (resourceDictionary.TryGet(NameToken.Properties, scanner, out DictionaryToken? markedContentPropertiesList))
             {
                 foreach (var pair in markedContentPropertiesList.Data)
                 {
                     var key = NameToken.Create(pair.Key);
 
-                    if (!DirectObjectFinder.TryGet(pair.Value, scanner, out DictionaryToken namedProperties))
+                    if (!DirectObjectFinder.TryGet(pair.Value, scanner, out DictionaryToken? namedProperties))
                     {
                         continue;
                     }
 
-                    markedContentProperties[key] = namedProperties;
+                    properties[key] = namedProperties;
                 }
             }
 
-            if (resourceDictionary.TryGet(NameToken.Shading, scanner, out DictionaryToken shadingList))
+            return new ResolvedResources(fonts, directFonts, xObjects, extendedGraphicsStateDictionaries, colorSpaces, properties);
+        }
+
+        private void LoadPatterns(DictionaryToken resourceDictionary)
+        {
+            if (!resourceDictionary.TryGet(NameToken.Pattern, scanner, out DictionaryToken? patternDictionary))
             {
-                foreach (var pair in shadingList.Data)
+                return;
+            }
+
+            // NB: in PDF, all patterns shall be local to the context in which they are defined.
+            foreach (var namePatternPair in patternDictionary.Data)
+            {
+                var name = NameToken.Create(namePatternPair.Key);
+                patternsProperties[name] = PatternParser.Create(namePatternPair.Value, scanner, this, filterProvider);
+            }
+        }
+
+        private void LoadShadings(DictionaryToken resourceDictionary)
+        {
+            if (!resourceDictionary.TryGet(NameToken.Shading, scanner, out DictionaryToken? shadingList))
+            {
+                return;
+            }
+
+            foreach (var pair in shadingList.Data)
+            {
+                var key = NameToken.Create(pair.Key);
+                if (DirectObjectFinder.TryGet(pair.Value, scanner, out DictionaryToken? namedPropertiesDictionary))
                 {
-                    var key = NameToken.Create(pair.Key);
-                    if (DirectObjectFinder.TryGet(pair.Value, scanner, out DictionaryToken namedPropertiesDictionary))
-                    {
-                        shadingsProperties[key] = ShadingParser.Create(namedPropertiesDictionary, scanner, this, filterProvider);
-                    }
-                    else if (DirectObjectFinder.TryGet(pair.Value, scanner, out StreamToken namedPropertiesStream))
-                    {
-                        // Shading types 4 to 7 shall be defined by a stream containing descriptive data characterizing
-                        // the shading's gradient fill.
-                       shadingsProperties[key] = ShadingParser.Create(namedPropertiesStream, scanner, this, filterProvider);
-                    }
-                    else
-                    {
-                        throw new NotImplementedException("Shading");
-                    }
+                    shadingsProperties[key] = ShadingParser.Create(namedPropertiesDictionary, scanner, this, filterProvider);
+                }
+                else if (DirectObjectFinder.TryGet(pair.Value, scanner, out StreamToken? namedPropertiesStream))
+                {
+                    // Shading types 4 to 7 shall be defined by a stream containing descriptive data characterizing
+                    // the shading's gradient fill.
+                    shadingsProperties[key] = ShadingParser.Create(namedPropertiesStream, scanner, this, filterProvider);
+                }
+                else
+                {
+                    throw new NotImplementedException("Shading");
                 }
             }
         }
@@ -177,11 +249,19 @@
         {
             lastLoadedFont = (null, null);
             loadedNamedColorSpaceDetails.Clear();
-            currentResourceState.Pop();
+            loadedColorSpaceDetailsCache.Clear();
+            currentFontState.Pop();
+            currentXObjectState.Pop();
             namedColorSpaces.Pop();
+            extendedGraphicsStates.Pop();
+            markedContentProperties.Pop();
+            shadingsProperties.Pop();
+            patternsProperties.Pop();
         }
 
-        private void LoadFontDictionary(DictionaryToken fontDictionary)
+        private void LoadFontDictionary(DictionaryToken fontDictionary,
+            Dictionary<NameToken, IndirectReference> fonts,
+            List<(NameToken Name, IFont Font)> directFonts)
         {
             lastLoadedFont = (null, null);
 
@@ -191,7 +271,7 @@
                 {
                     var reference = objectKey.Data;
 
-                    currentResourceState[NameToken.Create(pair.Key)] = reference;
+                    fonts[NameToken.Create(pair.Key)] = reference;
 
                     if (loadedFonts.ContainsKey(reference))
                     {
@@ -200,7 +280,7 @@
 
                     var fontObject = DirectObjectFinder.Get<DictionaryToken>(objectKey, scanner);
 
-                    if (fontObject == null)
+                    if (fontObject is null)
                     {
                         //This is a valid use case
                         continue;
@@ -208,7 +288,12 @@
 
                     try
                     {
-                        loadedFonts[reference] = fontFactory.Get(fontObject);
+                        var loadedFont = fontFactory.Get(fontObject);
+                        // Stamp the font dictionary's indirect reference so consumers can
+                        // distinguish same-named fonts (e.g. two subsets of one typeface
+                        // embedded without unique subset prefixes). See FontDetails.FontDictionaryReference.
+                        loadedFont.Details?.SetFontDictionaryReference(reference);
+                        loadedFonts[reference] = loadedFont;
                     }
                     catch
                     {
@@ -220,7 +305,11 @@
                 }
                 else if (pair.Value is DictionaryToken fd)
                 {
-                    loadedDirectFonts[NameToken.Create(pair.Key)] = fontFactory.Get(fd);
+                    var name = NameToken.Create(pair.Key);
+                    var font = fontFactory.Get(fd);
+
+                    directFonts.Add((name, font));
+                    loadedDirectFonts[name] = font;
                 }
                 else
                 {
@@ -229,15 +318,54 @@
             }
         }
 
-        public IFont GetFont(NameToken name)
+        /// <summary>
+        /// The result of expanding a resource dictionary, used for caching.
+        /// </summary>
+        private sealed class ResolvedResources
+        {
+            public Dictionary<NameToken, IndirectReference> Fonts { get; }
+
+            /// <summary>
+            /// Fonts written inline in the resource dictionary rather than referenced indirectly. These are
+            /// held by name in a store shared across resource dictionaries so the binding, unlike the parsed
+            /// font, has to be re-applied on every load.
+            /// </summary>
+            public IReadOnlyList<(NameToken Name, IFont Font)> DirectFonts { get; }
+
+            public Dictionary<NameToken, IndirectReference> XObjects { get; }
+
+            public Dictionary<NameToken, DictionaryToken> ExtendedGraphicsStates { get; }
+
+            public Dictionary<NameToken, ResourceColorSpace> NamedColorSpaces { get; }
+
+            public Dictionary<NameToken, DictionaryToken> MarkedContentProperties { get; }
+
+            public ResolvedResources(
+                Dictionary<NameToken, IndirectReference> fonts,
+                IReadOnlyList<(NameToken Name, IFont Font)> directFonts,
+                Dictionary<NameToken, IndirectReference> xObjects,
+                Dictionary<NameToken, DictionaryToken> extendedGraphicsStates,
+                Dictionary<NameToken, ResourceColorSpace> namedColorSpaces,
+                Dictionary<NameToken, DictionaryToken> markedContentProperties)
+            {
+                Fonts = fonts;
+                DirectFonts = directFonts;
+                XObjects = xObjects;
+                ExtendedGraphicsStates = extendedGraphicsStates;
+                NamedColorSpaces = namedColorSpaces;
+                MarkedContentProperties = markedContentProperties;
+            }
+        }
+
+        public IFont? GetFont(NameToken name)
         {
             if (lastLoadedFont.name == name)
             {
                 return lastLoadedFont.font;
             }
 
-            IFont font;
-            if (currentResourceState.TryGetValue(name, out var reference))
+            IFont? font;
+            if (currentFontState.TryGetValue(name, out var reference))
             {
                 loadedFonts.TryGetValue(reference, out font);
             }
@@ -255,21 +383,23 @@
         {
             lastLoadedFont = (null, null);
 
-            if (!DirectObjectFinder.TryGet(fontReferenceToken, scanner, out DictionaryToken fontDictionaryToken))
+            if (!DirectObjectFinder.TryGet(fontReferenceToken, scanner, out DictionaryToken? fontDictionaryToken))
             {
                 throw new PdfDocumentFormatException($"The requested font reference token {fontReferenceToken} wasn't a font.");
             }
 
             var font = fontFactory.Get(fontDictionaryToken);
 
+            font.Details?.SetFontDictionaryReference(fontReferenceToken.Data);
+
             return font;
         }
 
-        public bool TryGetNamedColorSpace(NameToken name, out ResourceColorSpace namedToken)
+        public bool TryGetNamedColorSpace(NameToken? name, out ResourceColorSpace namedToken)
         {
             namedToken = default(ResourceColorSpace);
 
-            if (name == null)
+            if (name is null)
             {
                 throw new ArgumentNullException(nameof(name));
             }
@@ -284,27 +414,84 @@
             return true;
         }
 
-        public ColorSpaceDetails GetColorSpaceDetails(NameToken name, DictionaryToken dictionary)
+        public ColorSpaceDetails GetColorSpaceDetails(NameToken? name, DictionaryToken? dictionary)
         {
-            if (dictionary == null)
+            dictionary ??= new DictionaryToken(new Dictionary<NameToken, IToken>());
+
+            if (!TryGetCacheColorSpaceDefinition(dictionary, out IToken? colorSpaceToken))
             {
-                dictionary = new DictionaryToken(new Dictionary<NameToken, IToken>());
+                return GetColorSpaceDetailsInternal(name, dictionary);
             }
 
+            var key = (name, colorSpaceToken);
+            if (loadedColorSpaceDetailsCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var parsed = GetColorSpaceDetailsInternal(name, dictionary);
+            loadedColorSpaceDetailsCache[key] = parsed;
+            return parsed;
+        }
+
+        private bool TryGetCacheColorSpaceDefinition(DictionaryToken dictionary, [NotNullWhen(true)] out IToken? colorSpaceToken)
+        {
+            colorSpaceToken = null;
+
+            // While a DefaultGray/RGB/CMYK substitute is being resolved the same colour space object can
+            // legitimately parse to a different result, so bypass the cache entirely.
+            if (isResolvingDefaultSubstitute)
+            {
+                return false;
+            }
+
+            // We rely on the color space definition for caching.
+            if (!dictionary.TryGet(NameToken.ColorSpace, out colorSpaceToken) &&
+                !dictionary.TryGet(NameToken.Cs, out colorSpaceToken))
+            {
+                return false;
+            }
+
+            // We do not cache stencil-mask color spaces as they do not rely on color space definition.
+            // Stencil color spaces are created when the dictionary contains `ImageMask` or `Im` or if
+            // a filter is CcittFaxDecodeFilter.
+            if (dictionary.ContainsKey(NameToken.ImageMask) || dictionary.ContainsKey(NameToken.Im))
+            {
+                return false;
+            }
+
+            if ((dictionary.ContainsKey(NameToken.Filter) || dictionary.ContainsKey(NameToken.F)) &&
+                filterProvider.GetFilters(dictionary, scanner).OfType<CcittFaxDecodeFilter>().Any())
+            {
+                return false;
+            }
+
+            // NB: If the colorSpaceToken is an indirect reference, we do not resolve it.
+            // This could change, fine for now
+
+            return true;
+        }
+
+        private ColorSpaceDetails GetColorSpaceDetailsInternal(NameToken? name, DictionaryToken dictionary)
+        {
             // Null color space for images
             if (name is null)
             {
                 return ColorSpaceDetailsParser.GetColorSpaceDetails(null, dictionary, scanner, this, filterProvider);
             }
 
-            if (name.TryMapToColorSpace(out ColorSpace colorspaceActual))
+            if (name.TryMapToColorSpace(out ColorSpace colorSpaceActual))
             {
-                // TODO - We need to find a way to store profile that have an actual dictionnary, e.g. ICC profiles - without parsing them again
-                return ColorSpaceDetailsParser.GetColorSpaceDetails(colorspaceActual, dictionary, scanner, this, filterProvider);
+                if (TryGetDefaultSubstitute(colorSpaceActual, out NameToken? substituteName))
+                {
+                    return ResolveDefaultSubstitute(colorSpaceActual, substituteName, dictionary);
+                }
+
+                return ColorSpaceDetailsParser.GetColorSpaceDetails(colorSpaceActual, dictionary, scanner, this, filterProvider);
             }
 
             // Named color spaces
-            if (loadedNamedColorSpaceDetails.TryGetValue(name, out ColorSpaceDetails csdLoaded))
+            if (loadedNamedColorSpaceDetails.TryGetValue(name, out ColorSpaceDetails? csdLoaded))
             {
                 return csdLoaded;
             }
@@ -316,7 +503,8 @@
                 {
                     return ColorSpaceDetailsParser.GetColorSpaceDetails(mapped, dictionary, scanner, this, filterProvider);
                 }
-                else if (namedColorSpace.Data is ArrayToken array)
+                
+                if (namedColorSpace.Data is ArrayToken array)
                 {
                     var csd = ColorSpaceDetailsParser.GetColorSpaceDetails(mapped, dictionary.With(NameToken.ColorSpace, array), scanner, this, filterProvider);
                     loadedNamedColorSpaceDetails[name] = csd;
@@ -327,10 +515,118 @@
             throw new InvalidOperationException($"Could not find color space for token '{name}'.");
         }
 
-        public bool TryGetXObject(NameToken name, out StreamToken stream)
+        public ColorSpaceDetails GetDeviceColorSpaceDetails(ColorSpace deviceColorSpace)
+        {
+            // 8.6.5.6: a directly selected device colour space is remapped to its DefaultGray/RGB/CMYK
+            // substitute when a valid one is present in the current resources; otherwise the device space
+            // singleton is returned.
+            if (TryGetDefaultSubstitute(deviceColorSpace, out NameToken? substituteName))
+            {
+                return ResolveDefaultSubstitute(deviceColorSpace, substituteName, null);
+            }
+
+            return GetDeviceColorSpaceSingleton(deviceColorSpace);
+        }
+
+        private static ColorSpaceDetails GetDeviceColorSpaceSingleton(ColorSpace deviceColorSpace)
+        {
+            return deviceColorSpace switch
+            {
+                ColorSpace.DeviceGray => DeviceGrayColorSpaceDetails.Instance,
+                ColorSpace.DeviceRGB => DeviceRgbColorSpaceDetails.Instance,
+                ColorSpace.DeviceCMYK => DeviceCmykColorSpaceDetails.Instance,
+                _ => throw new ArgumentOutOfRangeException(nameof(deviceColorSpace),
+                    deviceColorSpace,
+                    "Expected a device colour space (DeviceGray, DeviceRGB or DeviceCMYK).")
+            };
+        }
+
+        private ColorSpaceDetails ResolveDefaultSubstitute(ColorSpace requested, NameToken substituteName,
+            DictionaryToken? dictionary)
+        {
+            ColorSpaceDetails substitute;
+
+            isResolvingDefaultSubstitute = true;
+            try
+            {
+                substitute = GetColorSpaceDetails(substituteName, dictionary);
+            }
+            finally
+            {
+                isResolvingDefaultSubstitute = false;
+            }
+
+            ColorSpaceDetails device = GetDeviceColorSpaceSingleton(requested);
+
+            string? rejection;
+
+            if (substitute is UnsupportedColorSpaceDetails or PatternColorSpaceDetails)
+            {
+                // If substitute failed to parse, then we revert back to device cs (G/RGB/CMYK).
+                // Pattern is also substituted here because 8.6.5.6 forbids it as a default, and its
+                // NumberOfColorComponents throws.
+                rejection = "cannot be used as a default colour space";
+            }
+            else if (substitute.NumberOfColorComponents != device.NumberOfColorComponents)
+            {
+                rejection = $"takes {substitute.NumberOfColorComponents} components where {requested} has " +
+                            $"{device.NumberOfColorComponents}";
+            }
+            else
+            {
+                return substitute;
+            }
+
+            Logger.Warn($"The {substituteName} colour space in the current resources {rejection}; " +
+                                       $"ignoring it and using {requested} itself instead.");
+
+            // Record the verdict under the default's own name, where the substitute's parse is already
+            // cached for the current resource dictionary.
+            if (dictionary is null || dictionary.Data.Count == 0)
+            {
+                loadedNamedColorSpaceDetails[substituteName] = device;
+            }
+
+            return device;
+        }
+
+        private bool TryGetDefaultSubstitute(ColorSpace requested, [NotNullWhen(true)] out NameToken? substituteName)
+        {
+            substituteName = null;
+
+            // Don't substitute while already resolving a default, the device space is the genuine one
+            // (see isResolvingDefaultSubstitute).
+            if (isResolvingDefaultSubstitute)
+            {
+                return false;
+            }
+
+            NameToken? candidate = requested switch
+            {
+                ColorSpace.DeviceGray => NameToken.DefaultGray,
+                ColorSpace.DeviceRGB => NameToken.DefaultRgb,
+                ColorSpace.DeviceCMYK => NameToken.DefaultCmyk,
+                _ => null
+            };
+
+            // 8.6.5.6: any colour space other than a Lab, Indexed, or Pattern colour space may be used as a
+            // default. Reject those families so an invalid default falls back to the genuine device space.
+            if (candidate is not null &&
+                TryGetNamedColorSpace(candidate, out ResourceColorSpace substitute) &&
+                substitute.Name.TryMapToColorSpace(out ColorSpace substituteColorSpace) &&
+                substituteColorSpace is not ColorSpace.Lab and not ColorSpace.Indexed and not ColorSpace.Pattern)
+            {
+                substituteName = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryGetXObject(NameToken name, [NotNullWhen(true)] out StreamToken? stream)
         {
             stream = null;
-            if (!currentResourceState.TryGetValue(name, out var indirectReference))
+            if (!currentXObjectState.TryGetValue(name, out var indirectReference))
             {
                 return false;
             }
@@ -338,12 +634,28 @@
             return DirectObjectFinder.TryGet(new IndirectReferenceToken(indirectReference), scanner, out stream);
         }
 
-        public DictionaryToken GetExtendedGraphicsStateDictionary(NameToken name)
+        public bool TryGetXObjectReference(NameToken name, out IndirectReference reference)
         {
+            return currentXObjectState.TryGetValue(name, out reference);
+        }
+
+        public DictionaryToken? GetExtendedGraphicsStateDictionary(NameToken name)
+        {
+            if (parsingOptions.UseLenientParsing)
+            {
+                if (extendedGraphicsStates.TryGetValue(name, out var dictToken))
+                {
+                    return dictToken;
+                }
+
+                Logger.Error($"The graphic state dictionary does not contain the key '{name}'.");
+                return null;
+            }
+
             return extendedGraphicsStates[name];
         }
 
-        public DictionaryToken GetMarkedContentPropertiesDictionary(NameToken name)
+        public DictionaryToken? GetMarkedContentPropertiesDictionary(NameToken name)
         {
             return markedContentProperties.TryGetValue(name, out var result) ? result : null;
         }
@@ -355,7 +667,7 @@
 
         public IReadOnlyDictionary<NameToken, PatternColor> GetPatterns()
         {
-            return patternsProperties;
+            return patternsProperties.Flatten();
         }
     }
 }

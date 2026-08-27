@@ -1,13 +1,10 @@
 ﻿namespace UglyToad.PdfPig.Tests.Functions
 {
-    using System.Collections.Generic;
-    using System.Linq;
     using UglyToad.PdfPig.Functions;
     using UglyToad.PdfPig.Tests.Tokens;
     using UglyToad.PdfPig.Tokens;
     using UglyToad.PdfPig.Util;
-    using Xunit;
-
+ 
     public class PdfFunctionType2Tests
     {
         private static PdfFunctionType2 CreateFunction(double[] domain, double[] range, double[] c0, double[] c1, double n)
@@ -15,12 +12,12 @@
             DictionaryToken dictionaryToken = new DictionaryToken(new Dictionary<NameToken, IToken>()
             {
                 { NameToken.FunctionType, new NumericToken(2) },
-                { NameToken.Domain, new ArrayToken(domain.Select(v => new NumericToken((decimal)v)).ToArray()) },
-                { NameToken.Range, new ArrayToken(range.Select(v => new NumericToken((decimal)v)).ToArray()) },
+                { NameToken.Domain, new ArrayToken(domain.Select(v => new NumericToken(v)).ToArray()) },
+                { NameToken.Range, new ArrayToken(range.Select(v => new NumericToken(v)).ToArray()) },
 
-                { NameToken.C0, new ArrayToken(c0.Select(v => new NumericToken((decimal)v)).ToArray()) },
-                { NameToken.C1, new ArrayToken(c1.Select(v => new NumericToken((decimal)v)).ToArray()) },
-                { NameToken.N, new NumericToken((decimal)n) },
+                { NameToken.C0, new ArrayToken(c0.Select(v => new NumericToken(v)).ToArray()) },
+                { NameToken.C1, new ArrayToken(c1.Select(v => new NumericToken(v)).ToArray()) },
+                { NameToken.N, new NumericToken(n) },
             });
 
             var func = PdfFunctionParser.Create(dictionaryToken, new TestPdfTokenScanner(), new TestFilterProvider());

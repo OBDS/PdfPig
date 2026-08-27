@@ -1,6 +1,7 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Simple
 {
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using Cmap;
     using Composite;
@@ -10,12 +11,11 @@
     using Fonts.Encodings;
     using Fonts.Type1;
     using Tokens;
-    using Util.JetBrains.Annotations;
 
     /// <summary>
     /// A font based on the Adobe Type 1 font format.
     /// </summary>
-    internal class Type1FontSimple : IFont
+    internal sealed class Type1FontSimple : IFont
     {
         private static readonly TransformationMatrix DefaultTransformationMatrix = TransformationMatrix.FromValues(0.001, 0, 0, 0.001, 0, 0);
 
@@ -29,14 +29,17 @@
 
         private readonly FontDescriptor fontDescriptor;
 
-        private readonly Encoding encoding;
+        private readonly Encoding? encoding;
 
-        [CanBeNull]
-        private readonly Union<Type1Font, CompactFontFormatFontCollection> fontProgram;
+        private readonly Union<Type1Font, CompactFontFormatFontCollection>? fontProgram;
 
         private readonly ToUnicodeCMap toUnicodeCMap;
 
         private readonly TransformationMatrix fontMatrix;
+        private readonly double ascent;
+        private readonly double descent;
+        
+        private readonly bool isZapfDingbats;
 
         public NameToken Name { get; }
 
@@ -44,7 +47,13 @@
 
         public FontDetails Details { get; }
 
-        public Type1FontSimple(NameToken name, int firstChar, int lastChar, double[] widths, FontDescriptor fontDescriptor, Encoding encoding,
+        public Type1FontSimple(
+            NameToken name,
+            int firstChar,
+            int lastChar,
+            double[] widths,
+            FontDescriptor fontDescriptor,
+            Encoding encoding,
             CMap toUnicodeCMap,
             Union<Type1Font, CompactFontFormatFontCollection> fontProgram)
         {
@@ -58,7 +67,7 @@
 
             var matrix = DefaultTransformationMatrix;
 
-            if (fontProgram != null)
+            if (fontProgram is not null)
             {
                 if (fontProgram.TryGetFirst(out var t1Font))
                 {
@@ -75,6 +84,61 @@
             Name = name;
             Details = fontDescriptor?.ToDetails(name?.Data)
                       ?? FontDetails.GetDefault(name?.Data);
+            isZapfDingbats = encoding is ZapfDingbatsEncoding || Details.Name.Contains("ZapfDingbats");
+            descent = ComputeDescent();
+            ascent = ComputeAscent();
+        }
+
+        private double ComputeDescent()
+        {
+            if (Math.Abs(fontDescriptor.Descent) > double.Epsilon)
+            {
+                return fontMatrix.TransformY(fontDescriptor.Descent);
+            }
+
+            /*
+               // BobLd: Should 'fontProgram' be used
+              if (fontProgram is not null)
+              {
+                  if (fontProgram.TryGetFirst(out var t1))
+                  {
+
+                  }
+
+                  if (fontProgram.TryGetSecond(out var cffCol))
+                  {
+
+                  }
+              }
+              */
+
+            return -0.25;
+        }
+
+        private double ComputeAscent()
+        {
+            if (Math.Abs(fontDescriptor.Ascent) > double.Epsilon)
+            {
+                return fontMatrix.TransformY(fontDescriptor.Ascent);
+            }
+
+            /*
+             // BobLd: Should 'fontProgram' be used
+            if (fontProgram is not null)
+            {
+                if (fontProgram.TryGetFirst(out var t1))
+                {
+
+                }
+
+                if (fontProgram.TryGetSecond(out var cffCol))
+                {
+
+                }
+            }
+            */
+
+            return 0.75;
         }
 
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
@@ -83,16 +147,15 @@
             return bytes.CurrentByte;
         }
 
-        public bool TryGetUnicode(int characterCode, out string value)
+        public bool TryGetUnicode(int characterCode, [NotNullWhen(true)] out string? value)
         {
-            if (toUnicodeCMap.CanMapToUnicode)
+            value = null;
+            if (toUnicodeCMap.CanMapToUnicode && toUnicodeCMap.TryGet(characterCode, out value))
             {
-                return toUnicodeCMap.TryGet(characterCode, out value);
+                return true;
             }
 
-            value = null;
-
-            if (encoding == null)
+            if (encoding is null)
             {
                 try
                 {
@@ -120,14 +183,42 @@
 
             try
             {
-                value = GlyphList.AdobeGlyphList.NameToUnicode(name);
+                value = NameToUnicode(name);
             }
             catch
             {
                 return false;
             }
 
-            return true;
+            return value is not null;
+        }
+
+        private string? NameToUnicode(string name)
+        {
+            if (isZapfDingbats)
+            {
+                string value = GlyphList.ZapfDingbats.NameToUnicode(name);
+                if (value is not null)
+                {
+                    return value;
+                }
+            }
+
+            return GlyphList.AdobeGlyphList.NameToUnicode(name);
+        }
+
+        public string UnicodeCodePointToName(int unicodeValue)
+        {
+            if (isZapfDingbats)
+            {
+                string value = GlyphList.ZapfDingbats.UnicodeCodePointToName(unicodeValue);
+                if (value is not null)
+                {
+                    return value;
+                }
+            }
+
+            return GlyphList.AdobeGlyphList.UnicodeCodePointToName(unicodeValue);
         }
 
         public CharacterBoundingBox GetBoundingBox(int characterCode)
@@ -163,7 +254,7 @@
 
             if (fontDescriptor?.MissingWidth != null)
             {
-                return (double)fontDescriptor.MissingWidth;
+                return fontDescriptor.MissingWidth;
             }
 
             return boundingBox.Width;
@@ -184,20 +275,29 @@
             PdfRectangle? rect = null;
             if (fontProgram.TryGetFirst(out var t1Font))
             {
-                var name = encoding.GetName(characterCode);
+                string name;
+                if (encoding is not null)
+                {
+                    name = encoding.GetName(characterCode);
+                }
+                else
+                {
+                    name = UnicodeCodePointToName(characterCode);
+                }
+                
                 rect = t1Font.GetCharacterBoundingBox(name);
             }
             else if (fontProgram.TryGetSecond(out var cffFont))
             {
                 var first = cffFont.FirstFont;
                 string characterName;
-                if (encoding != null)
+                if (encoding is not null)
                 {
                     characterName = encoding.GetName(characterCode);
                 }
                 else
                 {
-                    characterName = cffFont.GetCharacterName(characterCode);
+                    characterName = cffFont.GetCharacterName(characterCode, false);
                 }
 
                 rect = first.GetCharacterBoundingBox(characterName);
@@ -217,43 +317,62 @@
             return fontMatrix;
         }
 
+        public double GetDescent()
+        {
+            return descent;
+        }
+
+        public double GetAscent()
+        {
+            return ascent;
+        }
+
         /// <inheritdoc/>
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
             path = null;
-            IReadOnlyList<PdfSubpath> tempPath = null;
+            IReadOnlyList<PdfSubpath>? tempPath = null;
             if (characterCode < firstChar || characterCode > lastChar)
             {
                 return false;
             }
 
-            if (fontProgram == null)
+            if (fontProgram is null)
             {
                 return false;
             }
 
             if (fontProgram.TryGetFirst(out var t1Font))
             {
-                var name = encoding.GetName(characterCode);
+                string name;
+                if (encoding is not null)
+                {
+                    name = encoding.GetName(characterCode);
+                }
+                else
+                {
+                    name = UnicodeCodePointToName(characterCode);
+                }
+                
                 tempPath = t1Font.GetCharacterPath(name);
             }
             else if (fontProgram.TryGetSecond(out var cffFont))
             {
                 var first = cffFont.FirstFont;
                 string characterName;
-                if (encoding != null)
+                if (encoding is not null)
                 {
                     characterName = encoding.GetName(characterCode);
                 }
                 else
                 {
-                    characterName = cffFont.GetCharacterName(characterCode);
+                    characterName = cffFont.GetCharacterName(characterCode, false);
                 }
 
                 tempPath = first.GetCharacterPath(characterName);
             }
 
-            if (tempPath != null)
+            if (tempPath is not null)
             {
                 path = tempPath;
                 return true;
@@ -263,11 +382,11 @@
         }
 
         /// <inheritdoc/>
-        public bool TryGetNormalisedPath(int characterCode, out IReadOnlyList<PdfSubpath> path)
+        public bool TryGetNormalisedPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path)
         {
             if (TryGetPath(characterCode, out path))
             {
-                path = fontMatrix.Transform(path).ToList();
+                path = fontMatrix.Transform(path).ToArray();
                 return true;
             }
             return false;

@@ -2,8 +2,8 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
-    using CrossReference;
     using Parser.Parts;
     using Tokens;
 
@@ -11,43 +11,33 @@
     {
         private readonly Dictionary<IndirectReference, ObjectToken> cache = new Dictionary<IndirectReference, ObjectToken>();
 
-        /// <summary>
-        /// Since we want to scan objects while reading the cross reference table we lazily load it when it's ready.
-        /// </summary>
-        private readonly Func<CrossReferenceTable> crossReferenceTable;
-
         private readonly IInputBytes bytes;
 
-        private IReadOnlyDictionary<IndirectReference, long> bruteForcedOffsets;
+        private IReadOnlyDictionary<IndirectReference, XrefLocation>? bruteForcedOffsets;
 
-        /// <summary>
-        /// Indicates whether we now have a cross reference table.
-        /// </summary>
-        private bool loadedFromTable;
+        private readonly Dictionary<IndirectReference, XrefLocation> offsets;
 
-        private readonly Dictionary<IndirectReference, long> offsets = new Dictionary<IndirectReference, long>();
-
-        public ObjectLocationProvider(Func<CrossReferenceTable> crossReferenceTable, IInputBytes bytes)
+        public ObjectLocationProvider(
+            IReadOnlyDictionary<IndirectReference, XrefLocation> xrefOffsets,
+            IReadOnlyDictionary<IndirectReference, XrefLocation>? bruteForcedOffsets,
+            IInputBytes bytes)
         {
-            this.crossReferenceTable = crossReferenceTable;
+            offsets = new Dictionary<IndirectReference, XrefLocation>();
+            foreach (var xrefOffset in xrefOffsets)
+            {
+                offsets[xrefOffset.Key] = xrefOffset.Value;
+            }
+
+            this.bruteForcedOffsets = bruteForcedOffsets;
             this.bytes = bytes;
         }
 
-        public bool TryGetOffset(IndirectReference reference, out long offset)
+        public bool TryGetOffset(IndirectReference reference, out XrefLocation offset)
         {
-            if (!loadedFromTable)
+            if (bruteForcedOffsets != null && bruteForcedOffsets.TryGetValue(reference, out var bfOffset))
             {
-                var table = crossReferenceTable.Invoke();
-
-                if (table != null)
-                {
-                    foreach (var objectOffset in table.ObjectOffsets)
-                    {
-                        offsets[objectOffset.Key] = objectOffset.Value;
-                    }
-
-                    loadedFromTable = true;
-                }
+                offset = bfOffset;
+                return true;
             }
 
             if (offsets.TryGetValue(reference, out offset))
@@ -55,7 +45,7 @@
                 return true;
             }
 
-            if (bruteForcedOffsets == null)
+            if (bruteForcedOffsets is null)
             {
                 bruteForcedOffsets = BruteForceSearcher.GetObjectLocations(bytes);
             }
@@ -63,27 +53,27 @@
             return bruteForcedOffsets.TryGetValue(reference, out offset);
         }
 
-        public void UpdateOffset(IndirectReference reference, long offset)
+        public void UpdateOffset(IndirectReference reference, XrefLocation offset)
         {
             offsets[reference] = offset;
         }
 
-        public bool TryGetCached(IndirectReference reference, out ObjectToken objectToken)
+        public bool TryGetCached(IndirectReference reference, [NotNullWhen(true)] out ObjectToken? objectToken)
         {
             return cache.TryGetValue(reference, out objectToken);
         }
 
         public void Cache(ObjectToken objectToken, bool force = false)
         {
-            if (objectToken == null)
+            if (objectToken is null)
             {
-                throw new ArgumentNullException();
+                throw new ArgumentNullException(nameof(objectToken));
             }
 
             // Don't cache incorrect locations.
-            var crossReference = crossReferenceTable();
-            if (!force && crossReference != null && crossReference.ObjectOffsets.TryGetValue(objectToken.Number, out var expected)
-                && objectToken.Position != expected)
+            if (!force
+                && offsets.TryGetValue(objectToken.Number, out var expected)
+                && (objectToken.Position.Type != expected.Type || objectToken.Position.Value1 != expected.Value1))
             {
                 return;
             }

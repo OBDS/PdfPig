@@ -1,8 +1,6 @@
 ﻿// ReSharper disable ObjectCreationAsStatement
 namespace UglyToad.PdfPig.Tests.Tokens
 {
-    using System;
-    using System.Collections.Generic;
     using PdfPig.Core;
     using PdfPig.Tokenization;
     using PdfPig.Tokenization.Scanner;
@@ -10,7 +8,15 @@ namespace UglyToad.PdfPig.Tests.Tokens
 
     internal class TestPdfTokenScanner : IPdfTokenScanner
     {
+        public StackDepthGuard StackDepthGuard => StackDepthGuard.Infinite;
+
         public Dictionary<IndirectReference, ObjectToken> Objects { get; } = new Dictionary<IndirectReference, ObjectToken>();
+
+        /// <summary>
+        /// Number of times <see cref="Get"/> has been called, so tests can assert that work is not repeated.
+        /// </summary>
+        public int GetCallCount { get; private set; }
+
         public bool MoveNext()
         {
             throw new NotImplementedException();
@@ -42,6 +48,7 @@ namespace UglyToad.PdfPig.Tests.Tokens
 
         public ObjectToken Get(IndirectReference reference)
         {
+            GetCallCount++;
             return Objects[reference];
         }
 

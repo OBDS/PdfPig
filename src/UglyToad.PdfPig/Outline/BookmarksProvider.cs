@@ -27,19 +27,19 @@
         /// <summary>
         /// Extract bookmarks, if any.
         /// </summary>
-        public Bookmarks GetBookmarks(Catalog catalog)
+        public Bookmarks? GetBookmarks(Catalog catalog,bool allowContainerNode = false)
         {
-            if (!catalog.CatalogDictionary.TryGet(NameToken.Outlines, pdfScanner, out DictionaryToken outlinesDictionary))
+            if (!catalog.CatalogDictionary.TryGet(NameToken.Outlines, pdfScanner, out DictionaryToken? outlinesDictionary))
             {
                 return null;
             }
 
-            if (outlinesDictionary.TryGet(NameToken.Type, pdfScanner, out NameToken typeName) && typeName != NameToken.Outlines)
+            if (outlinesDictionary.TryGet(NameToken.Type, pdfScanner, out NameToken? typeName) && typeName != NameToken.Outlines)
             {
                 log?.Error($"Outlines (bookmarks) dictionary did not have correct type specified: {typeName}.");
             }
 
-            if (!outlinesDictionary.TryGet(NameToken.First, pdfScanner, out DictionaryToken next))
+            if (!outlinesDictionary.TryGet(NameToken.First, pdfScanner, out DictionaryToken? next))
             {
                 return null;
             }
@@ -49,7 +49,7 @@
 
             while (next != null)
             {
-                ReadBookmarksRecursively(next, 0, false, seen, catalog.NamedDestinations, roots);
+                ReadBookmarksRecursively(next, 0, false, seen, catalog.NamedDestinations, roots, allowContainerNode);
 
                 if (!next.TryGet(NameToken.Next, out IndirectReferenceToken nextReference)
                     || !seen.Add(nextReference.Data))
@@ -67,8 +67,7 @@
         /// Extract bookmarks recursively.
         /// </summary>
         private void ReadBookmarksRecursively(DictionaryToken nodeDictionary, int level, bool readSiblings, HashSet<IndirectReference> seen,
-            NamedDestinations namedDestinations,
-            List<BookmarkNode> list)
+            NamedDestinations namedDestinations, List<BookmarkNode> list, bool allowContainerNode = false)
         {
             // 12.3 Document-Level Navigation
 
@@ -81,9 +80,9 @@
             }
 
             var children = new List<BookmarkNode>();
-            if (nodeDictionary.TryGet(NameToken.First, pdfScanner, out DictionaryToken firstChild))
+            if (nodeDictionary.TryGet(NameToken.First, pdfScanner, out DictionaryToken? firstChild))
             {
-                ReadBookmarksRecursively(firstChild, level + 1, true, seen, namedDestinations, children);
+                ReadBookmarksRecursively(firstChild, level + 1, true, seen, namedDestinations, children, allowContainerNode);
             }
 
             BookmarkNode bookmark;
@@ -111,11 +110,20 @@
                     return;
                 }
             }
+            else if(allowContainerNode)
+            {
+                bookmark = new ContainerBookmarkNode(title, level, children);
+                log.Warn($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
+            }
             else
             {
-                // Return boomark with page #0 if no destination or action is found.
-                log.Warn($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
-                bookmark = new DocumentBookmarkNode(title, level, new ExplicitDestination(0, ExplicitDestinationType.XyzCoordinates, new ExplicitDestinationCoordinates(0)), children);
+                // WS2125 ("TOC nodes pointing to page 0 - Node and all child items are hidden")
+                // used to return a page 0 bookmark here so a node without a destination, and its
+                // children, were not dropped. Upstream now models exactly that as a
+                // ContainerBookmarkNode, so callers that need those nodes ask for them with
+                // allowContainerNode: true rather than every caller receiving a fake page 0 entry.
+                log.Error($"No /Dest(ination) or /A(ction) entry found for bookmark node: {nodeDictionary}.");
+                return;
             }
 
             OnGettingBookmarkAction?.Invoke(bookmark, nodeDictionary);
@@ -139,12 +147,12 @@
 
                 current = DirectObjectFinder.Get<DictionaryToken>(nextReference, pdfScanner);
 
-                if (current == null)
+                if (current is null)
                 {
                     break;
                 }
 
-                ReadBookmarksRecursively(current, level, false, seen, namedDestinations, list);
+                ReadBookmarksRecursively(current, level, false, seen, namedDestinations, list, allowContainerNode);
             }
         }
     }

@@ -2,11 +2,12 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Core;
     using Fonts.TrueType;
     using Fonts.TrueType.Tables;
 
-    internal class PdfCidTrueTypeFont : ICidFontProgram
+    internal sealed class PdfCidTrueTypeFont : ICidFontProgram
     {
         private readonly TrueTypeFont font;
 
@@ -25,17 +26,34 @@
 
         public bool TryGetBoundingBox(int characterIdentifier, out PdfRectangle boundingBox) => TryGetBoundingBox(characterIdentifier, null, out boundingBox);
 
-        public bool TryGetBoundingBox(int characterIdentifier, Func<int, int?> characterCodeToGlyphId, out PdfRectangle boundingBox)
+        public bool TryGetBoundingBox(int characterIdentifier, Func<int, int?>? characterCodeToGlyphId, out PdfRectangle boundingBox)
             => font.TryGetBoundingBox(characterIdentifier, characterCodeToGlyphId, out boundingBox);
 
         public bool TryGetBoundingAdvancedWidth(int characterIdentifier, out double width) => TryGetBoundingAdvancedWidth(characterIdentifier, null, out width);
 
-        public bool TryGetBoundingAdvancedWidth(int characterIdentifier, Func<int, int?> characterCodeToGlyphId, out double width)
+        public bool TryGetBoundingAdvancedWidth(int characterIdentifier, Func<int, int?>? characterCodeToGlyphId, out double width)
             => font.TryGetAdvanceWidth(characterIdentifier, characterCodeToGlyphId, out width);
 
         public int GetFontMatrixMultiplier() => font.GetUnitsPerEm();
 
-        public bool TryGetPath(int characterCode, out IReadOnlyList<PdfSubpath> path) => font.TryGetPath(characterCode, out path);
+        public double? GetDescent()
+        {
+            return font.TableRegister.HorizontalHeaderTable.Descent;
+        }
+
+        public double? GetAscent()
+        {
+            return font.TableRegister.HorizontalHeaderTable.Ascent;
+        }
+
+        public bool TryGetFontMatrix(int characterCode, [NotNullWhen(true)] out TransformationMatrix? matrix)
+        {
+            // We don't have a matrix here
+            matrix = null;
+            return false;
+        }
+
+        public bool TryGetPath(int characterCode, [NotNullWhen(true)] out IReadOnlyList<PdfSubpath>? path) => font.TryGetPath(characterCode, out path);
 
         public bool TryGetPath(int characterCode, Func<int, int?> characterCodeToGlyphId, out IReadOnlyList<PdfSubpath> path)
             => font.TryGetPath(characterCode, characterCodeToGlyphId, out path);
