@@ -28,7 +28,14 @@
 
             if (!actionDictionary.TryGet(NameToken.S, pdfScanner, out NameToken actionType))
             {
-                throw new PdfDocumentFormatException($"No action type (/S) specified for action: {actionDictionary}.");
+                // OBDS customization: documents come from customers and cannot be corrected, so one
+                // malformed action must not cost us the whole outline. Seen in the wild: outline
+                // nodes whose /A resolves to a /Link annotation instead of an action, whose own /A
+                // is a further annotation - and eventually one that references itself - so no action
+                // type can ever be reached. Report that there is no action and let the caller fall
+                // back to a bookmark without a destination.
+                log.Warn($"No action type (/S) specified for action: {actionDictionary}.");
+                return false;
             }
 
             if (actionType.Equals(NameToken.GoTo))
